@@ -1,0 +1,260 @@
+
+Key = <<"live_ajUkSWCAvxjGdEg6KQGDnvdnw3Euhc">>.
+Url = "https://api.mollie.nl/v1/payments/tr_RMsenAhF6c".
+Hs = [ {"Authorization", "Bearer " ++ z_convert:to_list(Key)} ].
+
+httpc:request(get, {"https://api.mollie.nl/v1/payments/tr_RMsenAhF6c", Hs}, [ {autoredirect, true}, {relaxed, false} ], [ {sync, true}, {body_format, binary} ]).
+
+
+httpc:request(get, {"https://api.mollie.nl/v1/customers/cst_mEghhShhg6/subscriptions", Hs}, [ {autoredirect, true}, {relaxed, false} ], [ {sync, true}, {body_format, binary} ]).
+
+
+io:format("~p~n", [ jsx:decode(<<"{\"totalCount\":1,\"offset\":0,\"count\":1,\"data\":[{\"resource\":\"subscription\",\"id\":\"sub_V27zzWQeTs\",\"customerId\":\"cst_mEghhShhg6\",\"mode\":\"live\",\"createdDatetime\":\"2020-05-23T06:58:44.0Z\",\"status\":\"active\",\"amount\":\"20.00\",\"description\":\"Subscription for yvonne.hamelink@xmsnet.nl - cst_mEghhShhg6\",\"method\":null,\"times\":null,\"interval\":\"12 months\",\"startDate\":\"2021-05-23\",\"cancelledDatetime\":null,\"links\":{\"webhookUrl\":\"https://www.muziekschatten.nl/mollie/webhook/dsreuczaptrtyvwvjdfvqzbffyafbasz\"}}]}">>) ]).
+
+Transactie, naar ons gepushed (maar niet afgehandeld):
+
+#{<<"amount">> => <<"20.00">>,
+  <<"amountRefunded">> => <<"0.00">>,
+  <<"amountRemaining">> => <<"45.00">>,
+  <<"createdDatetime">> => <<"2021-05-22T22:09:23.0Z">>,
+  <<"customerId">> => <<"cst_mEghhShhg6">>,
+  <<"description">> =>
+      <<"Subscription for foo@bar.nl - cst_mEghhShhg6">>,
+  <<"details">> =>
+      #{<<"consumerAccount">> => <<"NL44ING.........">>,
+        <<"consumerBic">> => <<"INGBNL2A">>,
+        <<"consumerName">> =>
+            <<"Hr A B C L en/of Mw D H"/utf8>>,
+        <<"creditorIdentifier">> => <<"NL.......">>,
+        <<"dueDate">> => <<"2021-05-26">>,
+        <<"signatureDate">> => <<"2020-05-23">>,
+        <<"transferReference">> => <<"SD57-3602-1653-0231">>},
+  <<"id">> => <<"tr_RMsenAhF6c">>,
+  <<"links">> =>
+      #{<<"redirectUrl">> => null,
+        <<"webhookUrl">> =>
+            <<"https://www.muziekschatten.nl/mollie/webhook/dsreuczaptrtyvwvjdfvqzbffyafbasz">>},
+  <<"locale">> => <<"uk">>,
+  <<"mandateId">> => <<"mdt_JPesm33k6S">>,
+  <<"metadata">> => null,<<"method">> => <<"directdebit">>,
+  <<"mode">> => <<"live">>,
+  <<"paidDatetime">> => <<"2021-05-27T05:44:51.0Z">>,
+  <<"profileId">> => <<"pfl_j5j8B3bcxN">>,
+  <<"recurringType">> => <<"recurring">>,
+  <<"resource">> => <<"payment">>,<<"status">> => <<"paid">>,
+  <<"subscriptionId">> => <<"sub_V27zzWQeTs">>}
+
+
+
+======================================================================================================
+
+
+Aanpassingen:
+
+
+1. Bij payment:
+  - Fetch all cust ids from all payments **DONE**
+  - Take most recent valid customer id **DONE**
+    - If none: make customer id **DONE**
+  - Use customer id in payment API call  **DONE**
+
+
+2. Bij tonen subscription:
+  - Fetch all cust ids from all recurring payments **DONE**
+  - Fetch from API all subscriptions for all customers **DONE**
+  - Show list (not done - update old interface)
+
+3. Log unknown payment status with error **DONE**
+
+4. Webhook call aanpassen zodat payment_nr gebruikt wordt
+   (onbekende transacties door subscription)
+   - Nieuwe payment aanmaken  **DONE**
+   - Ref naar oude recurring_payment_id toevoegen  **DONE**
+
+5. Fix api_call return value checks in subscription functions  **DONE**
+
+6. More logs to payment_log  **DONE**
+
+7. Polling van mod_payment toevoegen voor non-final payments
+
+
+
+Reparaties:
+
+1. Status van user:
+   - Payments
+   - Subscriptions
+   - Status:
+     - Missende recurring payments
+     - Discrepantie payment status
+
+2. Repair routine:
+   - Missend recurring payments toevoegen
+     - Check how Muziekschatten extension works (date!)  **DONE**
+   - Discrepantie status fixen
+     - Log all changes
+
+
+TODO:
+  - subscription period after "refunded" status ?
+
+
+======================================================================================================
+
+CUSTOMER (16249) Hamstra:
+
+cst_qfk4uHUrT7
+
+#{<<"createdDatetime">> => <<"2021-05-19T17:30:19.0Z">>,
+  <<"email">> => <<"xyz@planet.nl">>,
+  <<"id">> => <<"cst_qfk4uHUrT7">>,<<"locale">> => <<"nl_NL">>,
+  <<"metadata">> => null,<<"mode">> => <<"live">>,
+  <<"name">> => <<"XY Zap">>,
+  <<"recentlyUsedMethods">> => [<<"ideal">>],
+  <<"resource">> => <<"customer">>}
+
+
+PAYMENTS:
+
+(1 payment -- expired)
+
+#{<<"count">> => 1,
+  <<"data">> =>
+      [#{<<"amount">> => <<"20.00">>,
+         <<"createdDatetime">> => <<"2021-05-19T17:30:19.0Z">>,
+         <<"customerId">> => <<"cst_qfk4uHUrT7">>,
+         <<"description">> => <<"Muziekschatten lidmaatschap (1 jaar)">>,
+         <<"details">> => null,
+         <<"expiredDatetime">> => <<"2021-05-19T17:47:02.0Z">>,
+         <<"id">> => <<"tr_Ubr3xpjETr">>,
+         <<"links">> =>
+             #{<<"redirectUrl">> =>
+                   <<"https://www.muziekschatten.nl/payment/ready/izguesnhsyjeempgrczerxfzifxswayv">>,
+               <<"webhookUrl">> =>
+                   <<"https://www.muziekschatten.nl/mollie/webhook/izguesnhsyjeempgrczerxfzifxswayv">>},
+         <<"locale">> => <<"nl">>,
+         <<"metadata">> =>
+             <<"{\"payment_id\":2447,\"payment_nr\":\"izguesnhsyjeempgrczerxfzifxswayv\"}">>,
+         <<"method">> => <<"ideal">>,<<"mode">> => <<"live">>,
+         <<"profileId">> => <<"pfl_j5j8B3bcxN">>,
+         <<"resource">> => <<"payment">>,<<"status">> => <<"expired">>}],
+  <<"offset">> => 0,<<"totalCount">> => 1}
+
+-----------------------------------------------------------------------------------------------------------
+cst_RrJH2kG9yx
+
+#{<<"createdDatetime">> => <<"2019-05-16T12:18:51.0Z">>,
+  <<"email">> => <<"p.w.j.hamstra@planet.nl">>,
+  <<"id">> => <<"cst_RrJH2kG9yx">>,<<"locale">> => <<"nl_NL">>,
+  <<"metadata">> => null,<<"mode">> => <<"live">>,
+  <<"name">> => <<"Peter Hamstra">>,
+  <<"recentlyUsedMethods">> => [<<"ideal">>,<<"directdebit">>],
+  <<"resource">> => <<"customer">>}
+
+
+
+PAYMENTS:
+
+(3 payments - one subscription, one payment, one payment+refund)
+
+#{<<"count">> => 3,
+  <<"data">> =>
+      [#{<<"amount">> => <<"20.00">>,<<"amountRefunded">> => <<"20.00">>,
+         <<"amountRemaining">> => <<"25.00">>,
+         <<"createdDatetime">> => <<"2021-05-15T22:06:06.0Z">>,
+         <<"customerId">> => <<"cst_RrJH2kG9yx">>,
+         <<"description">> =>
+             <<"Subscription for xyz@planet.nl - cst_RrJH2kG9yx">>,
+         <<"details">> =>
+             #{<<"bankReason">> =>
+                   <<"Return of funds requested by end customer">>,
+               <<"bankReasonCode">> => <<"MD06">>,
+               <<"consumerAccount">> => <<"NL88ABNA.......">>,
+               <<"consumerBic">> => <<"ABNANL2A">>,
+               <<"consumerName">> => <<"XY Z">>,
+               <<"creditorIdentifier">> => <<"NL.....">>,
+               <<"dueDate">> => <<"2021-05-19">>,
+               <<"signatureDate">> => <<"2019-05-16">>,
+               <<"transferReference">> => <<"SD36-1595-3156-1530">>},
+         <<"id">> => <<"tr_6wQ26RMNf5">>,
+         <<"links">> =>
+             #{<<"chargebacks">> =>
+                   <<"https://api.mollie.com/v1/payments/tr_6wQ26RMNf5/chargebacks">>,
+               <<"redirectUrl">> => null,
+               <<"refunds">> =>
+                   <<"https://api.mollie.com/v1/payments/tr_6wQ26RMNf5/refunds">>,
+               <<"webhookUrl">> =>
+                   <<"https://www.muziekschatten.nl/mollie/webhook/gsjccyuuztuwhfvyszjbwzadgmwtcgto">>},
+         <<"locale">> => <<"nl">>,<<"mandateId">> => <<"mdt_WkntD7wC8c">>,
+         <<"metadata">> => null,<<"method">> => <<"directdebit">>,
+         <<"mode">> => <<"live">>,
+         <<"paidDatetime">> => <<"2021-05-21T01:20:30.0Z">>,
+         <<"profileId">> => <<"pfl_j5j8B3bcxN">>,
+         <<"recurringType">> => <<"recurring">>,
+         <<"resource">> => <<"payment">>,<<"status">> => <<"charged_back">>,
+         <<"subscriptionId">> => <<"sub_Peg3GegHgV">>},
+       #{<<"amount">> => <<"20.00">>,<<"amountRefunded">> => <<"0.00">>,
+         <<"amountRemaining">> => <<"45.00">>,
+         <<"createdDatetime">> => <<"2020-05-15T22:07:38.0Z">>,
+         <<"customerId">> => <<"cst_RrJH2kG9yx">>,
+         <<"description">> =>
+             <<"Subscription for xyz@planet.nl - cst_RrJH2kG9yx">>,
+         <<"details">> =>
+             #{<<"bankReason">> =>
+                   <<"Return of funds requested by end customer">>,
+               <<"bankReasonCode">> => <<"MD06">>,
+               <<"consumerAccount">> => <<"NL88ABNA...........">>,
+               <<"consumerBic">> => <<"ABNANL2A">>,
+               <<"consumerName">> => <<"XY Z">>,
+               <<"creditorIdentifier">> => <<"NL.........">>,
+               <<"dueDate">> => <<"2020-05-20">>,
+               <<"signatureDate">> => <<"2019-05-16">>,
+               <<"transferReference">> => <<"SD23-5671-7185-3074">>},
+         <<"id">> => <<"tr_J7MDmyWQKt">>,
+         <<"links">> =>
+             #{<<"chargebacks">> =>
+                   <<"https://api.mollie.com/v1/payments/tr_J7MDmyWQKt/chargebacks">>,
+               <<"redirectUrl">> => null,
+               <<"settlement">> =>
+                   <<"https://api.mollie.com/v1/settlements/stl_HQ2AQmt96B">>,
+               <<"webhookUrl">> =>
+                   <<"https://www.muziekschatten.nl/mollie/webhook/gsjccyuuztuwhfvyszjbwzadgmwtcgto">>},
+         <<"locale">> => <<"nl">>,<<"mandateId">> => <<"mdt_WkntD7wC8c">>,
+         <<"metadata">> => null,<<"method">> => <<"directdebit">>,
+         <<"mode">> => <<"live">>,
+         <<"paidDatetime">> => <<"2020-05-21T05:30:04.0Z">>,
+         <<"profileId">> => <<"pfl_j5j8B3bcxN">>,
+         <<"recurringType">> => <<"recurring">>,
+         <<"resource">> => <<"payment">>,
+         <<"settlementId">> => <<"stl_HQ2AQmt96B">>,
+         <<"status">> => <<"charged_back">>,
+         <<"subscriptionId">> => <<"sub_Peg3GegHgV">>},
+       #{<<"amount">> => <<"20.00">>,<<"amountRefunded">> => <<"0.00">>,
+         <<"amountRemaining">> => <<"45.00">>,<<"countryCode">> => <<"NL">>,
+         <<"createdDatetime">> => <<"2019-05-16T12:18:51.0Z">>,
+         <<"customerId">> => <<"cst_RrJH2kG9yx">>,
+         <<"description">> => <<"Muziekschatten lidmaatschap (1 jaar)">>,
+         <<"details">> =>
+             #{<<"consumerAccount">> => <<"NL88ABNA.........">>,
+               <<"consumerBic">> => <<"ABNANL2A">>,
+               <<"consumerName">> => <<"XY Z">>},
+         <<"id">> => <<"tr_9TMyMpkFR5">>,<<"issuer">> => <<"ideal_ABNANL2A">>,
+         <<"links">> =>
+             #{<<"redirectUrl">> =>
+                   <<"https://www.muziekschatten.nl/payment/ready/gsjccyuuztuwhfvyszjbwzadgmwtcgto">>,
+               <<"settlement">> =>
+                   <<"https://api.mollie.com/v1/settlements/stl_DSxgAnedzu">>,
+               <<"webhookUrl">> =>
+                   <<"https://www.muziekschatten.nl/mollie/webhook/gsjccyuuztuwhfvyszjbwzadgmwtcgto">>},
+         <<"locale">> => <<"nl">>,<<"mandateId">> => <<"mdt_WkntD7wC8c">>,
+         <<"metadata">> =>
+             <<"{\"payment_id\":1370,\"payment_nr\":\"gsjccyuuztuwhfvyszjbwzadgmwtcgto\"}">>,
+         <<"method">> => <<"ideal">>,<<"mode">> => <<"live">>,
+         <<"paidDatetime">> => <<"2019-05-16T12:19:28.0Z">>,
+         <<"profileId">> => <<"pfl_j5j8B3bcxN">>,
+         <<"recurringType">> => <<"first">>,<<"resource">> => <<"payment">>,
+         <<"settlementId">> => <<"stl_DSxgAnedzu">>,
+         <<"status">> => <<"paidout">>}],
+  <<"offset">> => 0,<<"totalCount">> => 3}
+
+

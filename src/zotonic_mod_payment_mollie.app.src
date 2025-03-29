@@ -1,0 +1,16 @@
+{application, zotonic_mod_payment_mollie, [
+    {description, "Zotonic payment module for the PSP Mollie."},
+    {vsn, git},
+    {registered, []},
+    {applications, [
+        kernel, stdlib, zotonic_core
+    ]},
+    {env, []},
+    {modules, []},
+    {doc, "doc"},
+    {licenses, ["Apache-2.0"]},
+    {links, [
+        {"Website", "http://zotonic.com/"},
+        {"GitHub", "https://github.com/zotonic/zotonic_mod_payment_mollie"}
+    ]}
+]}.
