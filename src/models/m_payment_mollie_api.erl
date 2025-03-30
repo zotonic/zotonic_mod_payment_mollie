@@ -207,37 +207,32 @@ payment_url(MollieId) ->
 -spec payment_sync(integer(), z:context()) -> ok | {error, term()}.
 payment_sync(PaymentId, Context) when is_integer(PaymentId) ->
     case m_payment:get(PaymentId, Context) of
-        {ok, Payment} ->
-            case proplists:lookup(psp_module, Payment) of
-                {psp_module, mod_payment_mollie} ->
-                    {psp_external_id, ExtPaymentId} = proplists:lookup(psp_external_id, Payment),
-                    case api_call(get, "payments/" ++ z_convert:to_list(ExtPaymentId), [], Context) of
-                        {ok, #{
-                                <<"resource">> := <<"payment">>
-                            } = ThisPaymentJSON} ->
-                            handle_payment_sync(ThisPaymentJSON, Context);
-                        {error, Error} ->
-                            %% Log an error with the payment
-                            m_payment_log:log(
-                                PaymentId,
-                                <<"ERROR">>,
-                                [
-                                    {psp_module, mod_payment_mollie},
-                                    {description, "API Error fetching status from Mollie"},
-                                    {request_result, Error}
-                                ],
-                                Context),
-                            ?LOG_ERROR(#{
-                                in => zotonic_mod_payment_mollie,
-                                text => <<"API error creating mollie payment">>,
-                                result => error,
-                                reason => Error,
-                                payment => PaymentId
-                            }),
-                            Error
-                    end;
-                {psp_module, _} ->
-                    {error, psp_module}
+        {ok, #{ <<"psp_module">> := mod_payment_mollie } = Payment} ->
+            ExtPaymentId = maps:get(<<"psp_external_id">>, Payment),
+            case api_call(get, "payments/" ++ z_convert:to_list(ExtPaymentId), [], Context) of
+                {ok, #{
+                        <<"resource">> := <<"payment">>
+                    } = ThisPaymentJSON} ->
+                    handle_payment_sync(ThisPaymentJSON, Context);
+                {error, Error} ->
+                    %% Log an error with the payment
+                    m_payment_log:log(
+                        PaymentId,
+                        <<"ERROR">>,
+                        [
+                            {psp_module, mod_payment_mollie},
+                            {description, "API Error fetching status from Mollie"},
+                            {request_result, Error}
+                        ],
+                        Context),
+                    ?LOG_ERROR(#{
+                        in => zotonic_mod_payment_mollie,
+                        text => <<"API error creating mollie payment">>,
+                        result => error,
+                        reason => Error,
+                        payment => PaymentId
+                    }),
+                    Error
             end;
         {error, _} = Error ->
             Error
@@ -324,10 +319,10 @@ handle_payment_sync(ThisPaymentJSON, Context) ->
     case m_payment:get(FirstPaymentNr, Context) of
         {ok, FirstPayment} ->
             % This is the original payment starting the sequence
-            case proplists:lookup(psp_module, FirstPayment) of
-                {psp_module, mod_payment_mollie} ->
+            case maps:get(<<"psp_module">>, FirstPayment) of
+                mod_payment_mollie ->
                     % Fetch the status from Mollie
-                    {id, FirstPaymentId} = proplists:lookup(id, FirstPayment),
+                    FirstPaymentId = maps:get(<<"id">>, FirstPayment),
                     m_payment_log:log(
                         FirstPaymentId,
                         <<"SYNC">>,
@@ -339,7 +334,7 @@ handle_payment_sync(ThisPaymentJSON, Context) ->
                         Context),
                     % Simulate the webhook call
                     handle_payment_update(FirstPaymentNr, FirstPayment, ThisPaymentJSON, Context);
-                {psp_module, PSP} ->
+                PSP ->
                     ?LOG_ERROR(#{
                         in => zotonic_mod_payment_mollie,
                         text => <<"Payment PSP Mollie webhook call for unknown PSP">>,
@@ -379,61 +374,58 @@ handle_payment_sync(ThisPaymentJSON, Context) ->
 -spec payment_sync_webhook(binary(), binary(), z:context()) -> ok | {error, notfound|term()}.
 payment_sync_webhook(FirstPaymentNr, ExtPaymentId, Context) when is_binary(FirstPaymentNr) ->
     case m_payment:get(FirstPaymentNr, Context) of
-        {ok, FirstPayment} ->
-            case proplists:lookup(psp_module, FirstPayment) of
-                {psp_module, mod_payment_mollie} ->
-                    % Fetch the status from Mollie
-                    {id, FirstPaymentId} = proplists:lookup(id, FirstPayment),
-                    ?LOG_INFO(#{
-                        in => zotonic_mod_payment_mollie,
-                        text => <<"Payment PSP Mollie webhook call for payment">>,
-                        first_payment => FirstPaymentId
-                    }),
-                    case api_call(get, "payments/" ++ z_convert:to_list(ExtPaymentId), [], Context) of
-                        {ok, #{
-                                <<"resource">> := <<"payment">>
-                            } = ThisPaymentJSON} ->
-                            m_payment_log:log(
-                                FirstPaymentId,
-                                <<"WEBHOOK">>,
-                                [
-                                   {psp_module, mod_payment_mollie},
-                                   {description, "New webhook payment info"},
-                                   {payment, ThisPaymentJSON}
-                                ],
-                                Context),
-                            handle_payment_update(FirstPaymentId, FirstPayment, ThisPaymentJSON, Context);
-                        {error, Error} ->
-                            %% Log an error with the payment
-                            m_payment_log:log(
-                                FirstPaymentId,
-                                <<"ERROR">>,
-                                [
-                                    {psp_module, mod_payment_mollie},
-                                    {description, "API Error fetching status from Mollie"},
-                                    {request_result, Error}
-                                ],
-                                Context),
-                            ?LOG_ERROR(#{
-                                in => zotonic_mod_payment_mollie,
-                                text => <<"API error creating mollie payment">>,
-                                result => error,
-                                reason => Error,
-                                first_payment => FirstPaymentId
-                            }),
-                            Error
-                    end;
-                {psp_module, PSP} ->
+        {ok, #{ <<"psp_module">> := mod_payment_mollie } = FirstPayment} ->
+            % Fetch the status from Mollie
+            FirstPaymentId = maps:get(<<"id">>, FirstPayment),
+            ?LOG_INFO(#{
+                in => zotonic_mod_payment_mollie,
+                text => <<"Payment PSP Mollie webhook call for payment">>,
+                first_payment => FirstPaymentId
+            }),
+            case api_call(get, "payments/" ++ z_convert:to_list(ExtPaymentId), [], Context) of
+                {ok, #{
+                        <<"resource">> := <<"payment">>
+                    } = ThisPaymentJSON} ->
+                    m_payment_log:log(
+                        FirstPaymentId,
+                        <<"WEBHOOK">>,
+                        [
+                           {psp_module, mod_payment_mollie},
+                           {description, "New webhook payment info"},
+                           {payment, ThisPaymentJSON}
+                        ],
+                        Context),
+                    handle_payment_update(FirstPaymentId, FirstPayment, ThisPaymentJSON, Context);
+                {error, Error} ->
+                    %% Log an error with the payment
+                    m_payment_log:log(
+                        FirstPaymentId,
+                        <<"ERROR">>,
+                        [
+                            {psp_module, mod_payment_mollie},
+                            {description, "API Error fetching status from Mollie"},
+                            {request_result, Error}
+                        ],
+                        Context),
                     ?LOG_ERROR(#{
                         in => zotonic_mod_payment_mollie,
-                        text => <<"Payment PSP Mollie webhook call for unknown PSP">>,
+                        text => <<"API error creating mollie payment">>,
                         result => error,
-                        reason => notfound,
-                        first_payment => FirstPaymentNr,
-                        psp => PSP
+                        reason => Error,
+                        first_payment => FirstPaymentId
                     }),
-                    {error, notfound}
+                    Error
             end;
+        {ok, #{ <<"psp_module">> := PSP }} ->
+            ?LOG_ERROR(#{
+                in => zotonic_mod_payment_mollie,
+                text => <<"Payment PSP Mollie webhook call for unknown PSP">>,
+                result => error,
+                reason => notfound,
+                first_payment => FirstPaymentNr,
+                psp => PSP
+            }),
+            {error, notfound};
         {error, notfound} ->
             ?LOG_ERROR(#{
                 in => zotonic_mod_payment_mollie,
@@ -477,8 +469,8 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
         {ok, RecurringPayment} ->
             % Update the status of an already imported recurring payment.
             % This payment is linked to the first payment.
-            {id, RecurringPaymentId} = proplists:lookup(id, RecurringPayment),
-            {status, PrevStatus} = proplists:lookup(status, RecurringPayment),
+            RecurringPaymentId = maps:get(<<"id">>, RecurringPayment),
+            PrevStatus = maps:get(<<"status">>, RecurringPayment),
             case is_status_equal(Status, PrevStatus) of
                 true -> ok;
                 false -> update_payment_status(RecurringPaymentId, Status, DateTime, Context)
@@ -515,7 +507,7 @@ handle_payment_update(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"
         <<"status">> := Status
     } = JSON,
     DateTime = z_convert:to_datetime( status_date(JSON) ),
-    {status, PrevStatus} = proplists:lookup(status, FirstPayment),
+    PrevStatus = maps:get(<<"status">>, FirstPayment),
     case is_status_equal(Status, PrevStatus) of
         true ->
             ok;
@@ -702,7 +694,7 @@ is_valid_mandate(_) -> false.
 
 
 maybe_create_subscription(FirstPayment, Context) ->
-    case proplists:get_value(psp_data, FirstPayment) of
+    case maps:get(<<"psp_data">>, FirstPayment) of
         #{
             <<"sequenceType">> := <<"first">>,
             <<"customerId">> := CustomerId
@@ -717,8 +709,8 @@ maybe_create_subscription(FirstPayment, Context) ->
             maybe_create_subscription_1(FirstPayment, CustomerId, Context);
         PspData ->
             % Log an error with the payment
-            {id, PaymentId} = proplists:lookup(id, FirstPayment),
-            {user_id, UserId} = proplists:lookup(user_id, FirstPayment),
+            PaymentId = maps:get(<<"id">>, FirstPayment),
+            UserId = maps:get(<<"user_id">>, FirstPayment),
             m_payment_log:log(
                 PaymentId,
                 <<"ERROR">>,
@@ -740,7 +732,7 @@ maybe_create_subscription(FirstPayment, Context) ->
     end.
 
 maybe_create_subscription_1(FirstPayment, CustomerId, Context) ->
-    {created, Created} = proplists:lookup(created, FirstPayment),
+    Created = maps:get(<<"created">>, FirstPayment),
     RecentDate = z_datetime:prev_month(calendar:universal_time(), 2),
     if
         RecentDate < Created ->
@@ -750,8 +742,8 @@ maybe_create_subscription_1(FirstPayment, CustomerId, Context) ->
     end.
 
 create_subscription_1(FirstPayment, CustomerId, Context) ->
-    {id, PaymentId} = proplists:lookup(id, FirstPayment),
-    {user_id, UserId} = proplists:lookup(user_id, FirstPayment),
+    PaymentId = maps:get(<<"id">>, FirstPayment),
+    UserId = maps:get(<<"user_id">>, FirstPayment),
     case api_call(get, "customers/" ++ z_convert:to_list(CustomerId) ++ "/mandates", [], Context) of
         {ok, #{
             <<"_embedded">> := #{
@@ -763,10 +755,10 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
                     {{Year, Month, Day}, _} = calendar:local_time(),
                     YearFromNow = io_lib:format("~4..0w-~2..0w-~2..0w", [Year + 1, Month, Day]),
                     Email = z_convert:to_binary( m_rsc:p_no_acl(UserId, email, Context) ),
-                    WebhookUrl = webhook_url(proplists:get_value(payment_nr, FirstPayment), Context),
+                    WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, FirstPayment), Context),
                     Args = [
-                        {'amount[value]', filter_format_price:format_price(proplists:get_value(amount, FirstPayment), Context)},
-                        {'amount[currency]', proplists:get_value(currency, FirstPayment, <<"EUR">>)},
+                        {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, FirstPayment), Context)},
+                        {'amount[currency]', maps:get(<<"currency">>, FirstPayment, <<"EUR">>)},
                         {interval, <<"12 months">>},
                         {startDate, list_to_binary(YearFromNow)},
                         {webhookUrl, WebhookUrl},
