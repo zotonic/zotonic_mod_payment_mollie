@@ -51,30 +51,30 @@
 %% @doc Create a new payment with Mollie (https://www.mollie.com/nl/docs/reference/payments/create)
 create(PaymentId, Context) ->
     {ok, Payment} = m_payment:get(PaymentId, Context),
-    case proplists:lookup(currency, Payment) of
-        {currency, <<"EUR">>} ->
+    case maps:get(<<"currency">>, Payment) of
+        <<"EUR">> ->
             RedirectUrl = z_context:abs_url(
                 z_dispatcher:url_for(
                     payment_psp_done,
-                    [ {payment_nr, proplists:get_value(payment_nr, Payment)} ],
+                    [ {payment_nr, maps:get(<<"payment_nr">>, Payment)} ],
                     Context),
                 Context),
-            WebhookUrl = webhook_url(proplists:get_value(payment_nr, Payment), Context),
+            WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, Payment), Context),
             Metadata = #{
-                <<"payment_id">> => proplists:get_value(id, Payment),
-                <<"payment_nr">> => proplists:get_value(payment_nr, Payment)
+                <<"payment_id">> => maps:get(<<"id">>, Payment),
+                <<"payment_nr">> => maps:get(<<"payment_nr">>, Payment)
             },
             Recurring =
-                case proplists:get_value(is_recurring_start, Payment) of
+                case maps:get(<<"is_recurring_start">>, Payment, false) of
                     true ->
                         [{sequenceType, <<"first">>}];
                     false ->
                         []
                 end,
             Args = [
-                {'amount[value]', filter_format_price:format_price(proplists:get_value(amount, Payment), Context)},
-                {'amount[currency]', proplists:get_value(currency, Payment, <<"EUR">>)},
-                {description, valid_description( proplists:get_value(description, Payment) )},
+                {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, Payment), Context)},
+                {'amount[currency]', maps:get(<<"currency">>, Payment, <<"EUR">>)},
+                {description, valid_description( maps:get(<<"description">>, Payment) )},
                 {webhookUrl, WebhookUrl},
                 {redirectUrl, RedirectUrl},
                 {metadata, iolist_to_binary([ z_json:encode(Metadata) ])}
@@ -151,7 +151,7 @@ create(PaymentId, Context) ->
                 {error, _} = Error ->
                     Error
             end;
-        {currency, Currency} ->
+        Currency ->
             ?LOG_ERROR(#{
                 in => zotonic_mod_payment_mollie,
                 text => <<"Mollie payment request with non EUR currency">>,
