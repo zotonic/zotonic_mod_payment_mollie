@@ -163,17 +163,14 @@ create(PaymentId, Context) ->
             {error, {currency, only_eur}}
     end.
 
-maybe_add_custid(Payment, Args, Context) ->
-    case proplists:get_value(user_id, Payment) of
-        undefined ->
-            {ok, Args};
-        UserId when is_integer(UserId) ->
-            case ensure_mollie_customer_id(UserId, Context) of
-                {ok, CustomerId} ->
-                    {ok, [ {customerId, CustomerId} | Args ]};
-                {error, _} = Error ->
-                    Error
-            end
+maybe_add_custid(#{ <<"user_id">> := undefined }, Args, Context) ->
+    {ok, Args};
+maybe_add_custid(#{ <<"user_id">> := UserId }, Args, Context) ->
+    case ensure_mollie_customer_id(UserId, Context) of
+        {ok, CustomerId} ->
+            {ok, [ {customerId, CustomerId} | Args ]};
+        {error, _} = Error ->
+            Error
     end.
 
 valid_description(<<>>) -> <<"Payment">>;
