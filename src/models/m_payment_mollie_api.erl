@@ -1118,30 +1118,28 @@ first_valid_custid([ CustomerId | CustIds ], Context) ->
 mollie_customer_ids(UserId, OnlyRecurrent, Context) ->
     Payments = m_payment:list_user(UserId, Context),
     CustIds = lists:foldl(
-        fun(Payment, Acc) ->
-            case proplists:get_value(psp_module, Payment) of
-                mod_payment_mollie ->
-                    case proplists:get_value(psp_data, Payment) of
-                        #{
-                            <<"customerId">> := CustId
-                        } = PspData when is_binary(CustId) ->
-                            RecType = sequenceType(PspData),
-                            if
-                                not OnlyRecurrent orelse (RecType =/= <<>>) ->
-                                    case lists:member(CustId, Acc) of
-                                        true -> Acc;
-                                        false -> [ CustId | Acc ]
-                                    end;
-                                true ->
-                                    Acc
-                            end;
-                        _ ->
-                            Acc
+        fun
+            (#{ <<"psp_module">> := mod_payment_mollie } = Payment, Acc) ->
+                case maps:get(<<"psp_data">>, Payment) of
+                    #{
+                        <<"customerId">> := CustId
+                    } = PspData when is_binary(CustId) ->
+                        RecType = sequenceType(PspData),
+                        if
+                            not OnlyRecurrent orelse (RecType =/= <<>>) ->
+                                case lists:member(CustId, Acc) of
+                                    true -> Acc;
+                                    false -> [ CustId | Acc ]
+                                end;
+                            true ->
+                                Acc
+                        end;
+                    _ ->
+                        Acc
 
-                    end;
-                _ ->
-                    Acc
-            end
+                end;
+            (_Payment, Acc) ->
+                Acc
         end,
         [],
         Payments),
