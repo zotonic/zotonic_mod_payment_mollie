@@ -165,7 +165,7 @@ create(PaymentId, Context) ->
 
 maybe_add_custid(#{ <<"is_recurring_start">> := true, <<"user_id">> := undefined }=Payment, Args, Context) ->
     {Name, _Context} = z_template:render_to_iolist("_mollie_payment_to_name.tpl", [ {payment, Payment} ], Context),
-    Email = map:get(<<"email">>, Payment, undefined),
+    Email = maps:get(<<"email">>, Payment, undefined),
     case create_mollie_customer_id(Name, Email, Context) of
         {ok, CustomerId} ->
             {ok, [ {customerId, CustomerId} | Args ]};
