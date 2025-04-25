@@ -1,0 +1,1 @@
+{% if payment.name_first or payment.name_surname %}{{ payment.name_first }}{% if payment.name_surname_prefix %} {{ payment.name_surname_prefix }}{% endif %}{% if payment.name_surname %} {{ payment.name_surname }}{% endif %}{% endif %}
