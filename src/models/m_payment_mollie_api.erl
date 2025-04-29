@@ -163,7 +163,16 @@ create(PaymentId, Context) ->
             {error, {currency, only_eur}}
     end.
 
-maybe_add_custid(#{ <<"user_id">> := undefined }, Args, Context) ->
+maybe_add_custid(#{ <<"is_recurring_start">> := true, <<"user_id">> := undefined }=Payment, Args, Context) ->
+    {Name, _Context} = z_template:render_to_iolist("_mollie_payment_to_name.tpl", [ {payment, Payment} ], Context),
+    Email = maps:get(<<"email">>, Payment, undefined),
+    case create_mollie_customer_id(Name, Email, Context) of
+        {ok, CustomerId} ->
+            {ok, [ {customerId, CustomerId} | Args ]};
+        {error, _} = Error ->
+            Error
+    end;
+maybe_add_custid(#{ <<"user_id">> := undefined }, Args, _Context) ->
     {ok, Args};
 maybe_add_custid(#{ <<"user_id">> := UserId }, Args, Context) ->
     case ensure_mollie_customer_id(UserId, Context) of
@@ -1065,16 +1074,7 @@ ensure_mollie_customer_id(UserId, Context) ->
                     ContextSudo = z_acl:sudo(Context),
                     Email = m_rsc:p_no_acl(UserId, email, Context),
                     {Name, _Context} = z_template:render_to_iolist("_name.tpl", [ {id, UserId} ], ContextSudo),
-                    Args = [
-                        {name, iolist_to_binary(Name)},
-                        {email, Email}
-                    ],
-                    case api_call(post, "customers", Args, Context) of
-                        {ok, Json} ->
-                            {ok, maps:get(<<"id">>, Json)};
-                        {error, _} = Error ->
-                            Error
-                    end;
+                    create_mollie_customer_id(Name, Email, Context);
                 {error, _} = Error ->
                     Error
             end;
@@ -1082,6 +1082,18 @@ ensure_mollie_customer_id(UserId, Context) ->
             {error, resource_does_not_exist}
     end.
 
+%% @doc Create a new customer
+create_mollie_customer_id(Name, Email, Context) ->
+    Args = [
+            {name, iolist_to_binary(Name)},
+            {email, Email}
+           ],
+    case api_call(post, "customers", Args, Context) of
+        {ok, Json} ->
+            {ok, maps:get(<<"id">>, Json)};
+        {error, _} = Error ->
+            Error
+    end.
 
 %% @doc Find the most recent valid customer id for a given user
 -spec mollie_customer_id( m_rsc:resource_id(), boolean(), z:context() ) -> {ok, binary()} | {error, term()}.
