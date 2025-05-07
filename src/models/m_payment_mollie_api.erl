@@ -761,15 +761,13 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
         }} ->
             case lists:any(fun is_valid_mandate/1, Mandates) of
                 true ->
-                    {{Year, Month, Day}, _} = calendar:local_time(),
-                    YearFromNow = io_lib:format("~4..0w-~2..0w-~2..0w", [Year + 1, Month, Day]),
                     Email = z_convert:to_binary( m_rsc:p_no_acl(UserId, email, Context) ),
                     WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, FirstPayment), Context),
                     Args = [
                         {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, FirstPayment), Context)},
                         {'amount[currency]', maps:get(<<"currency">>, FirstPayment, <<"EUR">>)},
-                        {interval, <<"12 months">>},
-                        {startDate, list_to_binary(YearFromNow)},
+                        {interval, subscription_interval(Context)},
+                        {startDate, subscription_start_date(Context)},
                         {webhookUrl, WebhookUrl},
                         {description, <<"Subscription for ", Email/binary, " - ", CustomerId/binary>>}
                     ],
@@ -902,6 +900,25 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
             }),
             Error
     end.
+
+subscription_interval(Context) ->
+    case m_config:get_value(mod_payment_mollie, recurring_payment_interval, Context) of
+        <<"monthly">> -> <<"1 months">>;
+        <<"yearly">> -> <<"12 months">>;
+        _ -> <<"12 months">>
+    end.
+
+subscription_start_date(Context) ->
+    {Today, _} = calendar:local_time(),
+    case subscription_interval(Context) of
+        <<"1 months">> ->
+            format_date(filter_add_month:add_month(Today, Context));
+        <<"12 months">> ->
+            format_date(filter_add_year:add_year(Today, Context))
+    end.
+
+format_date({{Year, Month, Day}, _}) ->
+    list_to_binary(io_lib:format("~4..0w-~2..0w-~2..0w", [Year, Month, Day])).
 
 list_subscriptions(UserId, Context) ->
     CustIds = mollie_customer_ids(UserId, true, Context),

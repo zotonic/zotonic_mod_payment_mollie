@@ -15,6 +15,9 @@ The following configuration keys can be set:
 
  * `mod_payment_mollie.api_key` the secret API key for Mollie API requests. Be
    sure to use the *test* key when developing.
+ * `mod_payment_mollie.recurring_payment_interval` the payment interval at 
+   which recurring payments will follow. Possible values: `monthly` and `yearly`.
+   Defaults to `yearly`.
 
 Development configuration
 -------------------------
