@@ -31,7 +31,9 @@
     webhook_url/2,
     payment_url/1,
     list_subscriptions/2,
+    list_subscriptions_from_email/2,
     has_subscription/2,
+    has_subscription_from_email/2,
     cancel_subscription/2
     ]).
 
@@ -164,11 +166,18 @@ create(PaymentId, Context) ->
     end.
 
 maybe_add_custid(#{ <<"is_recurring_start">> := true, <<"user_id">> := undefined }=Payment, Args, Context) ->
-    {Name, _Context} = z_template:render_to_iolist("_mollie_payment_to_name.tpl", [ {payment, Payment} ], Context),
     Email = maps:get(<<"email">>, Payment, undefined),
-    case create_mollie_customer_id(Name, Email, Context) of
+    case mollie_customer_id_from_email(Email, false, Context) of
         {ok, CustomerId} ->
             {ok, [ {customerId, CustomerId} | Args ]};
+        {error, enoent} ->
+            {Name, _Context} = z_template:render_to_iolist("_mollie_payment_to_name.tpl", [ {payment, Payment} ], Context),
+            case create_mollie_customer_id(Name, Email, Context) of
+                {ok, CustomerId} ->
+                    {ok, [ {customerId, CustomerId} | Args ]};
+                {error, _} = Error ->
+                    Error
+            end;
         {error, _} = Error ->
             Error
     end;
@@ -922,6 +931,13 @@ format_date({{Year, Month, Day}, _}) ->
 
 list_subscriptions(UserId, Context) ->
     CustIds = mollie_customer_ids(UserId, true, Context),
+    list_subscriptions1(CustIds, Context).
+
+list_subscriptions_from_email(Email, Context) ->
+    CustIds = mollie_customer_ids_from_email(Email, true, Context),
+    list_subscriptions1(CustIds, Context).
+
+list_subscriptions1(CustIds, Context) ->
     try
         Subs = lists:map(
             fun(CustId) ->
@@ -935,7 +951,6 @@ list_subscriptions(UserId, Context) ->
     catch
         throw:{error, _} = E -> E
     end.
-
 
 mollie_list_subscriptions(CustId, Context) ->
     case api_call(get, "customers/" ++ z_convert:to_list(CustId) ++ "/subscriptions?limit=250", [], Context) of
@@ -1003,12 +1018,15 @@ to_date(D) -> z_datetime:to_datetime(D).
 
 
 has_subscription(UserId, Context) ->
-    case list_subscriptions(UserId, Context) of
-        {ok, Subs} ->
-            lists:any(fun is_subscription_active/1, Subs);
-        {error, _} ->
-            false
-    end.
+    has_subscription1(list_subscriptions(UserId, Context)).
+
+has_subscription_from_email(Email, Context) ->
+    has_subscription1(list_subscriptions_from_email(Email, Context)).
+
+has_subscription1({ok, Subs}) ->
+    lists:any(fun is_subscription_active/1, Subs);
+has_subscription1({error,_}) ->
+    false.
 
 is_subscription_active(#{ end_date := undefined }) -> true;
 is_subscription_active(#{ end_date := _}) -> false.
@@ -1061,23 +1079,24 @@ cancel_subscription({mollie_subscription, CustId, SubId}, Context) ->
             Error
     end;
 cancel_subscription(UserId, Context) when is_integer(UserId) ->
-    case list_subscriptions(UserId, Context) of
-        {ok, Subs} ->
-            lists:foldl(
-                fun
-                    (#{ id := SubId, end_date := undefined }, ok) ->
-                        cancel_subscription(SubId, Context);
-                    (#{ id := _SubId, end_date := {_, _} }, ok) ->
-                        ok;
-                    (_, {error, _} = Error) ->
-                        Error
-                end,
-                ok,
-                Subs);
-        {error, _} = Error ->
-            Error
-    end.
+    cancel_subscriptions(list_subscriptions(UserId, Context), Context);
+cancel_subscription(Email, Context) when is_binary(Email) ->
+    cancel_subscriptions(list_subscriptions_from_email(Email, Context), Context).
 
+cancel_subscriptions({ok, Subs}, Context) ->
+    lists:foldl(
+      fun
+          (#{ id := SubId, end_date := undefined }, ok) ->
+              cancel_subscription(SubId, Context);
+          (#{ id := _SubId, end_date := {_, _} }, ok) ->
+              ok;
+          (_, {error, _} = Error) ->
+              Error
+      end,
+      ok,
+      Subs);
+cancel_subscriptions({error, _}=Error, _Context) ->
+    Error.
 
 %% @doc Find the most recent valid customer id for a given user or create a new customer
 -spec ensure_mollie_customer_id( m_rsc:resource_id(), z:context() ) -> {ok, binary()} | {error, term()}.
@@ -1118,6 +1137,12 @@ mollie_customer_id(UserId, OnlyRecurrent, Context) ->
     CustIds = mollie_customer_ids(UserId, OnlyRecurrent, Context),
     first_valid_custid(CustIds, Context).
 
+%% @doc Find the most recent valid customer id for a given email address 
+-spec mollie_customer_id_from_email( binary(), boolean(), z:context() ) -> {ok, binary()} | {error, term()}.
+mollie_customer_id_from_email(Email, OnlyRecurrent, Context) ->
+    CustIds = mollie_customer_ids_from_email(Email, OnlyRecurrent, Context),
+    first_valid_custid(CustIds, Context).
+
 first_valid_custid([], _Context) ->
     {error, enoent};
 first_valid_custid([ CustomerId | CustIds ], Context) ->
@@ -1132,12 +1157,21 @@ first_valid_custid([ CustomerId | CustIds ], Context) ->
             Error
     end.
 
-
 %% @doc List all Mollie customer ids for the given user.
 %% The newest created customer id is listed first.
 -spec mollie_customer_ids( m_rsc:resource_id(), boolean(), z:context() ) -> [ binary() ].
 mollie_customer_ids(UserId, OnlyRecurrent, Context) ->
     Payments = m_payment:list_user(UserId, Context),
+    mollie_customer_ids1(Payments, OnlyRecurrent).
+
+%% @doc List all Mollie customer ids for the given email address.
+%% The newest created customer id is listed first.
+-spec mollie_customer_ids_from_email( binary(), boolean(), z:context() ) -> [ binary() ].
+mollie_customer_ids_from_email(Email, OnlyRecurrent, Context) ->
+    Payments = m_payment:list_email(Email, Context),
+    mollie_customer_ids1(Payments, OnlyRecurrent).
+
+mollie_customer_ids1(Payments, OnlyRecurrent) ->
     CustIds = lists:foldl(
         fun
             (#{ <<"psp_module">> := mod_payment_mollie } = Payment, Acc) ->
@@ -1165,6 +1199,8 @@ mollie_customer_ids(UserId, OnlyRecurrent, Context) ->
         [],
         Payments),
     lists:reverse(CustIds).
+
+
 
 sequenceType(#{ <<"sequenceType">> := SequenceType }) -> SequenceType;  % v2 API
 sequenceType(#{ <<"recurringType">> := SequenceType }) -> SequenceType; % v1 API
