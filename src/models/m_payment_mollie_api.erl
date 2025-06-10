@@ -66,13 +66,10 @@ create(PaymentId, Context) ->
                 <<"payment_id">> => maps:get(<<"id">>, Payment),
                 <<"payment_nr">> => maps:get(<<"payment_nr">>, Payment)
             },
-            Recurring =
-                case maps:get(<<"is_recurring_start">>, Payment, false) of
-                    true ->
-                        [{sequenceType, <<"first">>}];
-                    false ->
-                        []
-                end,
+            Recurring = case maps:get(<<"is_recurring_start">>, Payment, false) of
+                            true -> [{sequenceType, <<"first">>}];
+                            false -> []
+                        end,
             Args = [
                 {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, Payment), Context)},
                 {'amount[currency]', maps:get(<<"currency">>, Payment, <<"EUR">>)},
@@ -80,75 +77,15 @@ create(PaymentId, Context) ->
                 {webhookUrl, WebhookUrl},
                 {redirectUrl, RedirectUrl},
                 {metadata, iolist_to_binary([ z_json:encode(Metadata) ])}
-            ] ++ Recurring,
-
+                | Recurring ],
             case maybe_add_custid(Payment, Args, Context) of
                 {ok, ArgsCust} ->
-                    case api_call(post, "payments", ArgsCust, Context) of
-                        {ok, #{
-                                <<"resource">> := <<"payment">>,
-                                <<"id">> := MollieId,
-                                <<"_links">> := #{
-                                    <<"checkout">> := #{
-                                        <<"href">> := PaymentUrl
-                                    }
-                                }
-                        } = JSON} ->
-                            m_payment_log:log(
-                                PaymentId,
-                                <<"CREATED">>,
-                                [
-                                    {psp_module, mod_payment_mollie},
-                                    {psp_external_log_id, MollieId},
-                                    {description, <<"Created Mollie payment ", MollieId/binary>>},
-                                    {request_result, JSON}
-                                ],
-                                Context),
-                            {ok, #payment_psp_handler{
-                                psp_module = mod_payment_mollie,
-                                psp_external_id = MollieId,
-                                psp_data = JSON,
-                                redirect_uri = PaymentUrl
-                            }};
-                        {ok, JSON} ->
-                            m_payment_log:log(
-                              PaymentId,
-                              <<"ERROR">>,
-                              [
-                               {psp_module, mod_payment_mollie},
-                               {description, "API Unexpected result creating payment with Mollie"},
-                               {request_json, JSON},
-                               {request_args, Args}
-                              ],
-                              Context),
-                            ?LOG_ERROR(#{
-                                in => zotonic_mod_payment_mollie,
-                                text => <<"API unexpected result creating mollie payment">>,
-                                result => error,
-                                reason => unexpected_result,
-                                payment => PaymentId,
-                                data => JSON
-                            }),
-                            {error, unexpected_result};
-                        {error, Error} ->
-                            m_payment_log:log(
-                              PaymentId,
-                              <<"ERROR">>,
-                              [
-                               {psp_module, mod_payment_mollie},
-                               {description, "API Error creating payment with Mollie"},
-                               {request_result, Error},
-                               {request_args, Args}
-                              ],
-                              Context),
-                            ?LOG_ERROR(#{
-                                in => zotonic_mod_payment_mollie,
-                                text => <<"API error creating mollie payment">>,
-                                result => error,
-                                reason => Error,
-                                payment => PaymentId
-                            }),
-                            {error, Error}
+                    %% [TODO] Pre-flight check... (existing subscriptions)
+                    case payment_pre_flight_check(Payment, Context) of
+                        ok ->
+                            do_payment(PaymentId, ArgsCust, Context);
+                        {error, _} = Error ->
+                            Error
                     end;
                 {error, _} = Error ->
                     Error
@@ -164,6 +101,25 @@ create(PaymentId, Context) ->
             }),
             {error, {currency, only_eur}}
     end.
+
+payment_pre_flight_check(#{ <<"is_recurring_start">> := true, user_id := UserId }, Context) when is_integer(UserId) ->
+    check_subscriptions(list_subscriptions(UserId, Context));
+payment_pre_flight_check(#{ <<"is_recurring_start">> := true }=Payment, Context) ->
+    case maps:get(<<"email">>, Payment, undefined) of
+        undefined ->
+            {error, no_email};
+        Email ->
+            check_subscriptions(list_subscriptions_from_email(Email, Context))
+    end;
+payment_pre_flight_check(_Payment, _Context) ->
+    ok.
+
+% Checks if there are any subscription. If a user already has a subscription Mollie does
+% not allow the creation of another subscription with the same description. The description
+% for the subscription is currently pre defined.
+check_subscriptions({ok, []}) -> ok;
+check_subscriptions({ok, _}) -> {error, already_subscribed}.
+
 
 maybe_add_custid(#{ <<"is_recurring_start">> := true, <<"user_id">> := undefined }=Payment, Args, Context) ->
     Email = maps:get(<<"email">>, Payment, undefined),
@@ -194,6 +150,74 @@ maybe_add_custid(#{ <<"user_id">> := UserId }, Args, Context) ->
 valid_description(<<>>) -> <<"Payment">>;
 valid_description(undefined) -> <<"Payment">>;
 valid_description(D) when is_binary(D) -> D.
+
+do_payment(PaymentId, Args, Context) ->
+    case api_call(post, "payments", Args, Context) of
+        {ok, #{
+               <<"resource">> := <<"payment">>,
+               <<"id">> := MollieId,
+               <<"_links">> := #{
+                                 <<"checkout">> := #{
+                                                     <<"href">> := PaymentUrl
+                                                    }
+                                }
+              } = JSON} ->
+            m_payment_log:log(
+              PaymentId,
+              <<"CREATED">>,
+              [
+               {psp_module, mod_payment_mollie},
+               {psp_external_log_id, MollieId},
+               {description, <<"Created Mollie payment ", MollieId/binary>>},
+               {request_result, JSON}
+              ],
+              Context),
+            {ok, #payment_psp_handler{
+                    psp_module = mod_payment_mollie,
+                    psp_external_id = MollieId,
+                    psp_data = JSON,
+                    redirect_uri = PaymentUrl
+                   }};
+        {ok, JSON} ->
+            m_payment_log:log(
+              PaymentId,
+              <<"ERROR">>,
+              [
+               {psp_module, mod_payment_mollie},
+               {description, "API Unexpected result creating payment with Mollie"},
+               {request_json, JSON},
+               {request_args, Args}
+              ],
+              Context),
+            ?LOG_ERROR(#{
+                         in => zotonic_mod_payment_mollie,
+                         text => <<"API unexpected result creating mollie payment">>,
+                         result => error,
+                         reason => unexpected_result,
+                         payment => PaymentId,
+                         data => JSON
+                        }),
+            {error, unexpected_result};
+        {error, Error} ->
+            m_payment_log:log(
+              PaymentId,
+              <<"ERROR">>,
+              [
+               {psp_module, mod_payment_mollie},
+               {description, "API Error creating payment with Mollie"},
+               {request_result, Error},
+               {request_args, Args}
+              ],
+              Context),
+            ?LOG_ERROR(#{
+                         in => zotonic_mod_payment_mollie,
+                         text => <<"API error creating mollie payment">>,
+                         result => error,
+                         reason => Error,
+                         payment => PaymentId
+                        }),
+                            {error, Error}
+    end.
 
 
 %% @doc Allow special hostname for the webhook, useful for testing.
