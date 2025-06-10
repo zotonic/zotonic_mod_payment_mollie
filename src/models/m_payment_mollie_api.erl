@@ -770,12 +770,6 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
         }} ->
             case lists:any(fun is_valid_mandate/1, Mandates) of
                 true ->
-                    Email = case UserId of
-                                undefined ->
-                                    maps:get(<<"email">>, FirstPayment);
-                                _ ->
-                                    z_convert:to_binary( m_rsc:p_no_acl(UserId, email, Context) )
-                            end,
                     WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, FirstPayment), Context),
                     Args = [
                         {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, FirstPayment), Context)},
@@ -783,7 +777,7 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
                         {interval, subscription_interval(Context)},
                         {startDate, subscription_start_date(Context)},
                         {webhookUrl, WebhookUrl},
-                        {description, <<"Subscription for ", Email/binary, " - ", CustomerId/binary>>}
+                        {description, subscription_description(FirstPayment, CustomerId, Context)}
                     ],
                     case api_call(post, "customers/" ++ z_convert:to_list(CustomerId) ++ "/subscriptions",
                                   Args, Context)
@@ -914,6 +908,15 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
             }),
             Error
     end.
+
+subscription_description(#{ <<"user_id">> := undefined, <<"email">> := Email }, CustomerId, _Context) ->
+    subscription_description1(Email, CustomerId);
+subscription_description(#{ <<"user_id">> := UserId }, CustomerId, Context) ->
+    Email = z_convert:to_binary( m_rsc:p_no_acl(UserId, email, Context) ),
+    subscription_description1(Email, CustomerId).
+
+subscription_description1(Email, CustomerId) ->
+    <<"Subscription for ", Email/binary, " - ", CustomerId/binary>>.
 
 subscription_interval(Context) ->
     case m_config:get_value(mod_payment_mollie, recurring_payment_interval, Context) of
