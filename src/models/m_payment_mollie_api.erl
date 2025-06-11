@@ -102,7 +102,7 @@ create(PaymentId, Context) ->
             {error, {currency, only_eur}}
     end.
 
-payment_pre_flight_check(#{ <<"is_recurring_start">> := true, user_id := UserId }, Context) when is_integer(UserId) ->
+payment_pre_flight_check(#{ <<"is_recurring_start">> := true, <<"user_id">> := UserId }, Context) when is_integer(UserId) ->
     check_subscriptions(list_subscriptions(UserId, Context));
 payment_pre_flight_check(#{ <<"is_recurring_start">> := true }=Payment, Context) ->
     case maps:get(<<"email">>, Payment, undefined) of
