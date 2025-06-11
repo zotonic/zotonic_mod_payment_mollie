@@ -80,7 +80,6 @@ create(PaymentId, Context) ->
                 | Recurring ],
             case maybe_add_custid(Payment, Args, Context) of
                 {ok, ArgsCust} ->
-                    %% [TODO] Pre-flight check... (existing subscriptions)
                     case payment_pre_flight_check(Payment, Context) of
                         ok ->
                             do_payment(PaymentId, ArgsCust, Context);
