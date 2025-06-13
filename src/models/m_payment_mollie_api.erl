@@ -31,7 +31,9 @@
     webhook_url/2,
     payment_url/1,
     list_subscriptions/2,
+    list_subscriptions_from_email/2,
     has_subscription/2,
+    has_subscription_from_email/2,
     cancel_subscription/2
     ]).
 
@@ -64,13 +66,10 @@ create(PaymentId, Context) ->
                 <<"payment_id">> => maps:get(<<"id">>, Payment),
                 <<"payment_nr">> => maps:get(<<"payment_nr">>, Payment)
             },
-            Recurring =
-                case maps:get(<<"is_recurring_start">>, Payment, false) of
-                    true ->
-                        [{sequenceType, <<"first">>}];
-                    false ->
-                        []
-                end,
+            Recurring = case maps:get(<<"is_recurring_start">>, Payment, false) of
+                            true -> [{sequenceType, <<"first">>}];
+                            false -> []
+                        end,
             Args = [
                 {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, Payment), Context)},
                 {'amount[currency]', maps:get(<<"currency">>, Payment, <<"EUR">>)},
@@ -78,75 +77,14 @@ create(PaymentId, Context) ->
                 {webhookUrl, WebhookUrl},
                 {redirectUrl, RedirectUrl},
                 {metadata, iolist_to_binary([ z_json:encode(Metadata) ])}
-            ] ++ Recurring,
-
+                | Recurring ],
             case maybe_add_custid(Payment, Args, Context) of
                 {ok, ArgsCust} ->
-                    case api_call(post, "payments", ArgsCust, Context) of
-                        {ok, #{
-                                <<"resource">> := <<"payment">>,
-                                <<"id">> := MollieId,
-                                <<"_links">> := #{
-                                    <<"checkout">> := #{
-                                        <<"href">> := PaymentUrl
-                                    }
-                                }
-                        } = JSON} ->
-                            m_payment_log:log(
-                                PaymentId,
-                                <<"CREATED">>,
-                                [
-                                    {psp_module, mod_payment_mollie},
-                                    {psp_external_log_id, MollieId},
-                                    {description, <<"Created Mollie payment ", MollieId/binary>>},
-                                    {request_result, JSON}
-                                ],
-                                Context),
-                            {ok, #payment_psp_handler{
-                                psp_module = mod_payment_mollie,
-                                psp_external_id = MollieId,
-                                psp_data = JSON,
-                                redirect_uri = PaymentUrl
-                            }};
-                        {ok, JSON} ->
-                            m_payment_log:log(
-                              PaymentId,
-                              <<"ERROR">>,
-                              [
-                               {psp_module, mod_payment_mollie},
-                               {description, "API Unexpected result creating payment with Mollie"},
-                               {request_json, JSON},
-                               {request_args, Args}
-                              ],
-                              Context),
-                            ?LOG_ERROR(#{
-                                in => zotonic_mod_payment_mollie,
-                                text => <<"API unexpected result creating mollie payment">>,
-                                result => error,
-                                reason => unexpected_result,
-                                payment => PaymentId,
-                                data => JSON
-                            }),
-                            {error, unexpected_result};
-                        {error, Error} ->
-                            m_payment_log:log(
-                              PaymentId,
-                              <<"ERROR">>,
-                              [
-                               {psp_module, mod_payment_mollie},
-                               {description, "API Error creating payment with Mollie"},
-                               {request_result, Error},
-                               {request_args, Args}
-                              ],
-                              Context),
-                            ?LOG_ERROR(#{
-                                in => zotonic_mod_payment_mollie,
-                                text => <<"API error creating mollie payment">>,
-                                result => error,
-                                reason => Error,
-                                payment => PaymentId
-                            }),
-                            {error, Error}
+                    case payment_pre_flight_check(Payment, Context) of
+                        ok ->
+                            do_payment(PaymentId, ArgsCust, Context);
+                        {error, _} = Error ->
+                            Error
                     end;
                 {error, _} = Error ->
                     Error
@@ -163,12 +101,38 @@ create(PaymentId, Context) ->
             {error, {currency, only_eur}}
     end.
 
+payment_pre_flight_check(#{ <<"is_recurring_start">> := true, <<"user_id">> := UserId }, Context) when is_integer(UserId) ->
+    check_subscriptions(list_subscriptions(UserId, Context));
+payment_pre_flight_check(#{ <<"is_recurring_start">> := true }=Payment, Context) ->
+    case maps:get(<<"email">>, Payment, undefined) of
+        undefined ->
+            {error, no_email};
+        Email ->
+            check_subscriptions(list_subscriptions_from_email(Email, Context))
+    end;
+payment_pre_flight_check(_Payment, _Context) ->
+    ok.
+
+% Checks if there are any subscription. If a user already has a subscription Mollie does
+% not allow the creation of another subscription with the same description. The description
+% for the subscription is currently pre defined.
+check_subscriptions({ok, []}) -> ok;
+check_subscriptions({ok, _}) -> {error, already_subscribed}.
+
+
 maybe_add_custid(#{ <<"is_recurring_start">> := true, <<"user_id">> := undefined }=Payment, Args, Context) ->
-    {Name, _Context} = z_template:render_to_iolist("_mollie_payment_to_name.tpl", [ {payment, Payment} ], Context),
     Email = maps:get(<<"email">>, Payment, undefined),
-    case create_mollie_customer_id(Name, Email, Context) of
+    case mollie_customer_id_from_email(Email, false, Context) of
         {ok, CustomerId} ->
             {ok, [ {customerId, CustomerId} | Args ]};
+        {error, enoent} ->
+            {Name, _Context} = z_template:render_to_iolist("_mollie_payment_to_name.tpl", [ {payment, Payment} ], Context),
+            case create_mollie_customer_id(Name, Email, Context) of
+                {ok, CustomerId} ->
+                    {ok, [ {customerId, CustomerId} | Args ]};
+                {error, _} = Error ->
+                    Error
+            end;
         {error, _} = Error ->
             Error
     end;
@@ -185,6 +149,74 @@ maybe_add_custid(#{ <<"user_id">> := UserId }, Args, Context) ->
 valid_description(<<>>) -> <<"Payment">>;
 valid_description(undefined) -> <<"Payment">>;
 valid_description(D) when is_binary(D) -> D.
+
+do_payment(PaymentId, Args, Context) ->
+    case api_call(post, "payments", Args, Context) of
+        {ok, #{
+               <<"resource">> := <<"payment">>,
+               <<"id">> := MollieId,
+               <<"_links">> := #{
+                                 <<"checkout">> := #{
+                                                     <<"href">> := PaymentUrl
+                                                    }
+                                }
+              } = JSON} ->
+            m_payment_log:log(
+              PaymentId,
+              <<"CREATED">>,
+              [
+               {psp_module, mod_payment_mollie},
+               {psp_external_log_id, MollieId},
+               {description, <<"Created Mollie payment ", MollieId/binary>>},
+               {request_result, JSON}
+              ],
+              Context),
+            {ok, #payment_psp_handler{
+                    psp_module = mod_payment_mollie,
+                    psp_external_id = MollieId,
+                    psp_data = JSON,
+                    redirect_uri = PaymentUrl
+                   }};
+        {ok, JSON} ->
+            m_payment_log:log(
+              PaymentId,
+              <<"ERROR">>,
+              [
+               {psp_module, mod_payment_mollie},
+               {description, "API Unexpected result creating payment with Mollie"},
+               {request_json, JSON},
+               {request_args, Args}
+              ],
+              Context),
+            ?LOG_ERROR(#{
+                         in => zotonic_mod_payment_mollie,
+                         text => <<"API unexpected result creating mollie payment">>,
+                         result => error,
+                         reason => unexpected_result,
+                         payment => PaymentId,
+                         data => JSON
+                        }),
+            {error, unexpected_result};
+        {error, Error} ->
+            m_payment_log:log(
+              PaymentId,
+              <<"ERROR">>,
+              [
+               {psp_module, mod_payment_mollie},
+               {description, "API Error creating payment with Mollie"},
+               {request_result, Error},
+               {request_args, Args}
+              ],
+              Context),
+            ?LOG_ERROR(#{
+                         in => zotonic_mod_payment_mollie,
+                         text => <<"API error creating mollie payment">>,
+                         result => error,
+                         reason => Error,
+                         payment => PaymentId
+                        }),
+                            {error, Error}
+    end.
 
 
 %% @doc Allow special hostname for the webhook, useful for testing.
@@ -761,7 +793,6 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
         }} ->
             case lists:any(fun is_valid_mandate/1, Mandates) of
                 true ->
-                    Email = z_convert:to_binary( m_rsc:p_no_acl(UserId, email, Context) ),
                     WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, FirstPayment), Context),
                     Args = [
                         {'amount[value]', filter_format_price:format_price(maps:get(<<"amount">>, FirstPayment), Context)},
@@ -769,7 +800,7 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
                         {interval, subscription_interval(Context)},
                         {startDate, subscription_start_date(Context)},
                         {webhookUrl, WebhookUrl},
-                        {description, <<"Subscription for ", Email/binary, " - ", CustomerId/binary>>}
+                        {description, subscription_description(FirstPayment, CustomerId, Context)}
                     ],
                     case api_call(post, "customers/" ++ z_convert:to_list(CustomerId) ++ "/subscriptions",
                                   Args, Context)
@@ -901,6 +932,15 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
             Error
     end.
 
+subscription_description(#{ <<"user_id">> := undefined, <<"email">> := Email }, CustomerId, _Context) ->
+    subscription_description1(Email, CustomerId);
+subscription_description(#{ <<"user_id">> := UserId }, CustomerId, Context) ->
+    Email = z_convert:to_binary( m_rsc:p_no_acl(UserId, email, Context) ),
+    subscription_description1(Email, CustomerId).
+
+subscription_description1(Email, CustomerId) ->
+    <<"Subscription for ", Email/binary, " - ", CustomerId/binary>>.
+
 subscription_interval(Context) ->
     case m_config:get_value(mod_payment_mollie, recurring_payment_interval, Context) of
         <<"monthly">> -> <<"1 months">>;
@@ -922,6 +962,13 @@ format_date({{Year, Month, Day}, _}) ->
 
 list_subscriptions(UserId, Context) ->
     CustIds = mollie_customer_ids(UserId, true, Context),
+    list_subscriptions1(CustIds, Context).
+
+list_subscriptions_from_email(Email, Context) ->
+    CustIds = mollie_customer_ids_from_email(Email, true, Context),
+    list_subscriptions1(CustIds, Context).
+
+list_subscriptions1(CustIds, Context) ->
     try
         Subs = lists:map(
             fun(CustId) ->
@@ -935,7 +982,6 @@ list_subscriptions(UserId, Context) ->
     catch
         throw:{error, _} = E -> E
     end.
-
 
 mollie_list_subscriptions(CustId, Context) ->
     case api_call(get, "customers/" ++ z_convert:to_list(CustId) ++ "/subscriptions?limit=250", [], Context) of
@@ -1003,12 +1049,15 @@ to_date(D) -> z_datetime:to_datetime(D).
 
 
 has_subscription(UserId, Context) ->
-    case list_subscriptions(UserId, Context) of
-        {ok, Subs} ->
-            lists:any(fun is_subscription_active/1, Subs);
-        {error, _} ->
-            false
-    end.
+    has_subscription1(list_subscriptions(UserId, Context)).
+
+has_subscription_from_email(Email, Context) ->
+    has_subscription1(list_subscriptions_from_email(Email, Context)).
+
+has_subscription1({ok, Subs}) ->
+    lists:any(fun is_subscription_active/1, Subs);
+has_subscription1({error,_}) ->
+    false.
 
 is_subscription_active(#{ end_date := undefined }) -> true;
 is_subscription_active(#{ end_date := _}) -> false.
@@ -1061,23 +1110,24 @@ cancel_subscription({mollie_subscription, CustId, SubId}, Context) ->
             Error
     end;
 cancel_subscription(UserId, Context) when is_integer(UserId) ->
-    case list_subscriptions(UserId, Context) of
-        {ok, Subs} ->
-            lists:foldl(
-                fun
-                    (#{ id := SubId, end_date := undefined }, ok) ->
-                        cancel_subscription(SubId, Context);
-                    (#{ id := _SubId, end_date := {_, _} }, ok) ->
-                        ok;
-                    (_, {error, _} = Error) ->
-                        Error
-                end,
-                ok,
-                Subs);
-        {error, _} = Error ->
-            Error
-    end.
+    cancel_subscriptions(list_subscriptions(UserId, Context), Context);
+cancel_subscription(Email, Context) when is_binary(Email) ->
+    cancel_subscriptions(list_subscriptions_from_email(Email, Context), Context).
 
+cancel_subscriptions({ok, Subs}, Context) ->
+    lists:foldl(
+      fun
+          (#{ id := SubId, end_date := undefined }, ok) ->
+              cancel_subscription(SubId, Context);
+          (#{ id := _SubId, end_date := {_, _} }, ok) ->
+              ok;
+          (_, {error, _} = Error) ->
+              Error
+      end,
+      ok,
+      Subs);
+cancel_subscriptions({error, _}=Error, _Context) ->
+    Error.
 
 %% @doc Find the most recent valid customer id for a given user or create a new customer
 -spec ensure_mollie_customer_id( m_rsc:resource_id(), z:context() ) -> {ok, binary()} | {error, term()}.
@@ -1118,6 +1168,12 @@ mollie_customer_id(UserId, OnlyRecurrent, Context) ->
     CustIds = mollie_customer_ids(UserId, OnlyRecurrent, Context),
     first_valid_custid(CustIds, Context).
 
+%% @doc Find the most recent valid customer id for a given email address 
+-spec mollie_customer_id_from_email( binary(), boolean(), z:context() ) -> {ok, binary()} | {error, term()}.
+mollie_customer_id_from_email(Email, OnlyRecurrent, Context) ->
+    CustIds = mollie_customer_ids_from_email(Email, OnlyRecurrent, Context),
+    first_valid_custid(CustIds, Context).
+
 first_valid_custid([], _Context) ->
     {error, enoent};
 first_valid_custid([ CustomerId | CustIds ], Context) ->
@@ -1132,12 +1188,21 @@ first_valid_custid([ CustomerId | CustIds ], Context) ->
             Error
     end.
 
-
 %% @doc List all Mollie customer ids for the given user.
 %% The newest created customer id is listed first.
 -spec mollie_customer_ids( m_rsc:resource_id(), boolean(), z:context() ) -> [ binary() ].
 mollie_customer_ids(UserId, OnlyRecurrent, Context) ->
     Payments = m_payment:list_user(UserId, Context),
+    mollie_customer_ids1(Payments, OnlyRecurrent).
+
+%% @doc List all Mollie customer ids for the given email address.
+%% The newest created customer id is listed first.
+-spec mollie_customer_ids_from_email( binary(), boolean(), z:context() ) -> [ binary() ].
+mollie_customer_ids_from_email(Email, OnlyRecurrent, Context) ->
+    Payments = m_payment:list_email(Email, Context),
+    mollie_customer_ids1(Payments, OnlyRecurrent).
+
+mollie_customer_ids1(Payments, OnlyRecurrent) ->
     CustIds = lists:foldl(
         fun
             (#{ <<"psp_module">> := mod_payment_mollie } = Payment, Acc) ->
@@ -1165,6 +1230,8 @@ mollie_customer_ids(UserId, OnlyRecurrent, Context) ->
         [],
         Payments),
     lists:reverse(CustIds).
+
+
 
 sequenceType(#{ <<"sequenceType">> := SequenceType }) -> SequenceType;  % v2 API
 sequenceType(#{ <<"recurringType">> := SequenceType }) -> SequenceType; % v1 API
