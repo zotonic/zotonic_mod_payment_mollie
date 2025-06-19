@@ -526,6 +526,7 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
                         psp_module = mod_payment_mollie,
                         psp_external_id = ExtId,
                         psp_payment_description = Description,
+                        redirect_uri = <<>>, % there is no redirect uri
                         psp_data = JSON
                     },
                     ok = m_payment:update_psp_handler(NewPaymentId, PSPHandler, Context),
@@ -716,7 +717,7 @@ api_call(Method, Endpoint, Args, Context) ->
 -spec is_test( z:context() ) -> boolean().
 is_test(Context) ->
     case api_key(Context) of
-        <<"test_", _/binary>> -> true;
+        {ok, <<"test_", _/binary>>} -> true;
         _ -> false
     end.
 
