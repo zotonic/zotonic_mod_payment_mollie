@@ -329,7 +329,8 @@ fetch_payments_since_loop(Oldest, NextLink, Acc, Context) ->
         {ok, #{ <<"_embedded">> := #{ <<"payments">> := Payments } } = JSON} ->
             Newer = lists:filter(
                 fun(P) ->
-                    status_date(P) >= Oldest
+                    Status = payment_status(P),
+                    status_date(Status, P) >= Oldest
                 end,
                 Payments),
             Acc1 = Acc ++ Newer,
@@ -494,7 +495,6 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
     % The given (first) Payment MUST have 'recurring' set.
     #{
         <<"id">> := ExtId,
-        <<"status">> := Status,
         <<"subscriptionId">> := _SubscriptionId,
         <<"amount">> := #{
             <<"currency">> := Currency,
@@ -502,9 +502,10 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
         },
         <<"description">> := Description
     } = JSON,
+    Status = payment_status(JSON),
     % Create a new payment, referring to the PaymentId
     AmountNr = z_convert:to_float(Amount),
-    DateTime = z_convert:to_datetime( status_date(JSON) ),
+    DateTime = z_convert:to_datetime( status_date(Status, JSON) ),
     case m_payment:get_by_psp(mod_payment_mollie, ExtId, Context) of
         {ok, RecurringPayment} ->
             % Update the status of an already imported recurring payment.
@@ -547,10 +548,8 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
     end;
 handle_payment_update(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"first">> } = JSON, Context) ->
     % First recurring payment for an existing payment - if moved to paid then start the subscription
-    #{
-        <<"status">> := Status
-    } = JSON,
-    DateTime = z_convert:to_datetime( status_date(JSON) ),
+    Status = payment_status(JSON),
+    DateTime = z_convert:to_datetime( status_date(Status, JSON) ),
     PrevStatus = maps:get(<<"status">>, FirstPayment),
     case is_status_equal(Status, PrevStatus) of
         true ->
@@ -564,9 +563,7 @@ handle_payment_update(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"
             end
     end;
 handle_payment_update(OneOffPaymentId, OneOffPayment, JSON, Context) ->
-    #{
-        <<"status">> := Status
-    } = JSON,
+    Status = payment_status(JSON),
     ?LOG_INFO(#{
         in => zotonic_mod_payment_mollie,
         text => <<"Payment PSP Mollie webhook call for one-off payment">>,
@@ -708,12 +705,29 @@ first_defined([Value | Rest]) ->
 first_defined([]) ->
     undefined.
 
-status_date(#{ <<"status">> := <<"charged_back">> }) -> calendar:universal_time();
-status_date(#{ <<"expiredAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
-status_date(#{ <<"failedAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
-status_date(#{ <<"canceledAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
-status_date(#{ <<"paidAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
-status_date(#{ <<"createdAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date.
+
+%% Derived statuses from Mollie v2 API need special date handling:
+%% - charged_back: No specific date field available, use current time
+%% - refunded: Refund date is in the refund object (not payment), use current time
+%% - paidout: Use settledAt if available, otherwise current time
+status_date(<<"charged_back">>, _JSON) -> calendar:universal_time();
+status_date(<<"refunded">>, _JSON) -> calendar:universal_time();
+status_date(<<"paidout">>, #{ <<"settledAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
+status_date(<<"paidout">>, _JSON) -> calendar:universal_time();
+status_date(_Status, #{ <<"expiredAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
+status_date(_Status, #{ <<"failedAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
+status_date(_Status, #{ <<"canceledAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
+status_date(_Status, #{ <<"paidAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
+status_date(_Status, #{ <<"createdAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date.
+
+
+%% In the Mollie v2 API the statuses 'refunded', 'charged_back' and 'paidout' are removed.
+%% The final status is now 'paid'. The removed statuses need to be derived from the presence
+%% of links in the _links object.
+payment_status(#{ <<"status">> := <<"paid">>, <<"_links">> := #{ <<"chargebacks">> := #{ <<"href">> := _ }}}) -> <<"charged_back">>;
+payment_status(#{ <<"status">> := <<"paid">>, <<"_links">> := #{ <<"refunds">> := #{ <<"href">> := _ }}}) -> <<"refunded">>;
+payment_status(#{ <<"status">> := <<"paid">>, <<"_links">> := #{ <<"settlement">> := #{ <<"href">> := _ }}}) -> <<"paidout">>;
+payment_status(#{ <<"status">> := Status }) -> Status.
 
 % Status is one of: open cancelled expired failed pending paid paidout refunded charged_back
 update_payment_status(PaymentId, <<"open">>, Date, Context) ->         mod_payment:set_payment_status(PaymentId, new, Date, Context);
