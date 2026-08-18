@@ -63,7 +63,6 @@ create(PaymentId, Context) ->
                 Context),
             WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, Payment), Context),
             Metadata = #{
-                <<"payment_id">> => maps:get(<<"id">>, Payment),
                 <<"payment_nr">> => maps:get(<<"payment_nr">>, Payment)
             },
             Recurring = case maps:get(<<"is_recurring_start">>, Payment, false) of
@@ -514,7 +513,9 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
             PrevStatus = maps:get(<<"status">>, RecurringPayment),
             case is_status_equal(Status, PrevStatus) of
                 true -> ok;
-                false -> update_payment_status(RecurringPaymentId, Status, DateTime, Context)
+                false ->
+                    ok = maybe_update_contact(RecurringPaymentId, PrevStatus, Status, JSON, Context),
+                    update_payment_status(RecurringPaymentId, Status, DateTime, Context)
             end;
         {error, notfound} ->
             % New recurring payment for an existing first payment.
@@ -530,6 +531,7 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
                         psp_data = JSON
                     },
                     ok = m_payment:update_psp_handler(NewPaymentId, PSPHandler, Context),
+                    ok = maybe_update_contact(NewPaymentId, new, Status, JSON, Context),
                     update_payment_status(NewPaymentId, Status, DateTime, Context);
                 {error, Reason} = Error ->
                     ?LOG_ERROR(#{
@@ -554,13 +556,14 @@ handle_payment_update(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"
         true ->
             ok;
         false ->
+            ok = maybe_update_contact(FirstPaymentId, PrevStatus, Status, JSON, Context),
             case update_payment_status(FirstPaymentId, Status, DateTime, Context) of
                 ok when Status =:= <<"paid">> -> maybe_create_subscription(FirstPayment, Context);
                 ok -> ok;
                 {error, _} = Error -> Error
             end
     end;
-handle_payment_update(OneOffPaymentId, _OneOffPayment, JSON, Context) ->
+handle_payment_update(OneOffPaymentId, OneOffPayment, JSON, Context) ->
     #{
         <<"status">> := Status
     } = JSON,
@@ -576,12 +579,134 @@ handle_payment_update(OneOffPaymentId, _OneOffPayment, JSON, Context) ->
             {psp_module, mod_payment_mollie},
             {description, "New payment status"},
             {status, JSON}
-        ],
-        Context),
+    ],
+    Context),
     % UPDATE OUR ORDER STATUS
     DateTime = z_convert:to_datetime( status_date(JSON) ),
+    ok = maybe_update_contact(
+        OneOffPaymentId,
+        maps:get(<<"status">>, OneOffPayment),
+        Status,
+        JSON,
+        Context),
     update_payment_status(OneOffPaymentId, Status, DateTime, Context).
 
+
+maybe_update_contact(_PaymentId, _CurrentStatus, <<"open">>, _JSON, _Context) ->
+    ok;
+maybe_update_contact(PaymentId, new, _Status, JSON, Context) ->
+    case m_payment:maybe_update_contact(PaymentId, payment_link_contact(JSON), Context) of
+        ok ->
+            ok;
+        {error, need_contact} ->
+            maybe_fetch_payment_link_contact(PaymentId, JSON, Context);
+        {error, _} = Error ->
+            Error
+    end;
+maybe_update_contact(_PaymentId, _CurrentStatus, _Status, _JSON, _Context) ->
+    ok.
+
+maybe_fetch_payment_link_contact(PaymentId, JSON, Context) ->
+    case maps:get(<<"customerId">>, JSON, undefined) of
+        CustomerId when is_binary(CustomerId), CustomerId =/= <<>> ->
+            case api_call(get, "customers/" ++ z_convert:to_list(CustomerId), [], Context) of
+                {ok, Customer} ->
+                    case m_payment:maybe_update_contact(
+                        PaymentId,
+                        mollie_customer_contact(Customer),
+                        Context)
+                    of
+                        ok -> ok;
+                        {error, need_contact} -> ok;
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} ->
+                    ok
+            end;
+        _ ->
+            ok
+    end.
+
+payment_link_contact(JSON) ->
+    Details = maps:get(<<"details">>, JSON, #{}),
+    Address = first_map([
+        maps:get(<<"billingAddress">>, JSON, undefined),
+        maps:get(<<"shippingAddress">>, JSON, undefined),
+        maps:get(<<"billingAddress">>, Details, undefined),
+        maps:get(<<"shippingAddress">>, Details, undefined)
+    ]),
+    maps:merge(
+        mollie_address_props(Address),
+        maps:merge(
+            mollie_name_props(first_defined([
+                maps:get(<<"consumerName">>, Details, undefined),
+                maps:get(<<"cardHolder">>, Details, undefined)
+            ])),
+            #{
+                <<"email">> => first_defined([
+                    maps:get(<<"consumerEmail">>, Details, undefined),
+                    maps:get(<<"email">>, Details, undefined)
+                ])
+            })).
+
+mollie_customer_contact(Customer) ->
+    maps:merge(
+        mollie_name_props(maps:get(<<"name">>, Customer, undefined)),
+        #{
+            <<"email">> => maps:get(<<"email">>, Customer, undefined)
+        }).
+
+mollie_name_props(Name) when is_binary(Name) ->
+    case binary:split(z_string:trim(Name), <<" ">>, [global, trim_all]) of
+        [] ->
+            #{};
+        [<<>>] ->
+            #{};
+        [Surname] ->
+            #{ <<"name_surname">> => Surname };
+        [First | Rest] ->
+            #{ <<"name_first">> => First,
+               <<"name_surname">> => iolist_to_binary(lists:join(<<" ">>, Rest)) }
+    end;
+mollie_name_props(_) ->
+    #{}.
+
+mollie_address_props(Address) when is_map(Address) ->
+    #{
+        <<"address_street_1">> => first_defined([
+            maps:get(<<"streetAndNumber">>, Address, undefined),
+            maps:get(<<"street">>, Address, undefined),
+            maps:get(<<"line1">>, Address, undefined)
+        ]),
+        <<"address_street_2">> => maps:get(<<"line2">>, Address, undefined),
+        <<"address_postcode">> => first_defined([
+            maps:get(<<"postalCode">>, Address, undefined),
+            maps:get(<<"postal_code">>, Address, undefined)
+        ]),
+        <<"address_city">> => maps:get(<<"city">>, Address, undefined),
+        <<"address_state">> => maps:get(<<"region">>, Address, maps:get(<<"state">>, Address, undefined)),
+        <<"address_country">> => first_defined([
+            maps:get(<<"country">>, Address, undefined),
+            maps:get(<<"countryCode">>, Address, undefined)
+        ])
+    };
+mollie_address_props(_) ->
+    #{}.
+
+first_map([Value | _Rest]) when is_map(Value) ->
+    Value;
+first_map([_ | Rest]) ->
+    first_map(Rest);
+first_map([]) ->
+    #{}.
+
+first_defined([Value | Rest]) ->
+    case z_utils:is_empty(Value) of
+        true -> first_defined(Rest);
+        false -> Value
+    end;
+first_defined([]) ->
+    undefined.
 
 status_date(#{ <<"status">> := <<"charged_back">> }) -> calendar:universal_time();
 status_date(#{ <<"expiredAt">> := Date }) when is_binary(Date), Date =/= <<>> -> Date;
