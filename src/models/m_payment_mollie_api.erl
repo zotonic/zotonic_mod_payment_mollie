@@ -579,19 +579,19 @@ handle_payment_update(OneOffPaymentId, OneOffPayment, JSON, Context) ->
     ],
     Context),
     % UPDATE OUR ORDER STATUS
-    DateTime = z_convert:to_datetime( status_date(JSON) ),
-    ok = maybe_update_contact(
-        OneOffPaymentId,
-        maps:get(<<"status">>, OneOffPayment),
-        Status,
-        JSON,
-        Context),
+    DateTime = z_convert:to_datetime( status_date(Status, JSON) ),
+    ok = maybe_update_contact(OneOffPaymentId, maps:get(<<"status">>, OneOffPayment), Status, JSON, Context),
     update_payment_status(OneOffPaymentId, Status, DateTime, Context).
 
 
+maybe_update_contact(PaymentId, new, _MollieStatus, JSON, Context) ->
+    maybe_update_contact(PaymentId, JSON, Context);
 maybe_update_contact(_PaymentId, _CurrentStatus, <<"open">>, _JSON, _Context) ->
     ok;
-maybe_update_contact(PaymentId, new, _Status, JSON, Context) ->
+maybe_update_contact(PaymentId, _CurrentStatus, _MollieStatus, JSON, Context) ->
+    maybe_update_contact(PaymentId, JSON, Context).
+
+maybe_update_contact(PaymentId, JSON, Context) ->
     case m_payment:maybe_update_contact(PaymentId, payment_link_contact(JSON), Context) of
         ok ->
             ok;
@@ -599,9 +599,7 @@ maybe_update_contact(PaymentId, new, _Status, JSON, Context) ->
             maybe_fetch_payment_link_contact(PaymentId, JSON, Context);
         {error, _} = Error ->
             Error
-    end;
-maybe_update_contact(_PaymentId, _CurrentStatus, _Status, _JSON, _Context) ->
-    ok.
+    end.
 
 maybe_fetch_payment_link_contact(PaymentId, JSON, Context) ->
     case maps:get(<<"customerId">>, JSON, undefined) of
