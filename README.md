@@ -1,7 +1,7 @@
 Mollie payments for Zotonic
 ===========================
 
-This is a Payment Service Provider (PSP) module for [mod_payment](https://github.com/driebit/mod_payment).
+This is a Payment Service Provider (PSP) module for [mod_payment](https://github.com/zotonic/zotonic_mod_payment).
 
 This module interfaces mod_payment to the PSP Mollie (https://mollie.com/)
 
