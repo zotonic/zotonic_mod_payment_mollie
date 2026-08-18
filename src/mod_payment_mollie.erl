@@ -1,9 +1,9 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2025 Driebit BV
+%% @copyright 2018-2026 Driebit BV
 %% @doc Payment PSP module for Mollie
 %% @end
 
-%% Copyright 2018-2025 Driebit BV
+%% Copyright 2018-2026 Driebit BV
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,7 +37,12 @@
 %% @doc Payment request, make new payment with Mollie, return
 %%      payment (mollie) details and a redirect uri for the user
 %%      to handle the payment.
-observe_payment_psp_request(#payment_psp_request{ payment_id = PaymentId, currency = <<"EUR">> }, Context) ->
+observe_payment_psp_request(#payment_psp_request{
+        payment_id = PaymentId,
+        currency = <<"EUR">>,
+        preferred_psp_module = PreferredPspModule
+    }, Context) when PreferredPspModule =:= undefined;
+                     PreferredPspModule =:= ?MODULE ->
     m_payment_mollie_api:create(PaymentId, Context);
 observe_payment_psp_request(#payment_psp_request{}, _Context) ->
     undefined.
