@@ -59,6 +59,7 @@ create(PaymentId, Context) ->
                 z_dispatcher:url_for(
                     payment_psp_done,
                     [ {payment_nr, maps:get(<<"payment_nr">>, Payment)} ],
+                    none,
                     Context),
                 Context),
             WebhookUrl = webhook_url(maps:get(<<"payment_nr">>, Payment), Context),
@@ -220,7 +221,11 @@ do_payment(PaymentId, Args, Context) ->
 
 %% @doc Allow special hostname for the webhook, useful for testing.
 webhook_url(PaymentNr, Context) ->
-    Path = z_dispatcher:url_for(mollie_payment_webhook, [ {payment_nr, PaymentNr} ], Context),
+    Path = z_dispatcher:url_for(
+        mollie_payment_webhook,
+        [ {payment_nr, PaymentNr} ],
+        none,
+        Context),
     case z_convert:to_binary(m_config:get_value(mod_payment_mollie, webhook_host, Context)) of
         <<"http:", _/binary>> = Host -> <<Host/binary, Path/binary>>;
         <<"https:", _/binary>> = Host -> <<Host/binary, Path/binary>>;
