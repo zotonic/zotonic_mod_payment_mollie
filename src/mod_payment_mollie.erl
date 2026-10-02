@@ -24,6 +24,33 @@
 -mod_author("Driebit").
 -mod_depends([ mod_payment, mod_admin ]).
 
+-mod_config([
+    #{
+        key => api_key,
+        type => binary,
+        default => <<>>,
+        description => "Required secret Mollie API key. Use a test_ key for test payments or a live_ key for live payments."
+    },
+    #{
+        key => recurring_payment_interval,
+        type => binary,
+        default => <<"yearly">>,
+        description => "Interval for new recurring subscriptions: monthly or yearly. Defaults to yearly."
+    },
+    #{
+        key => webhook_host,
+        type => binary,
+        default => <<>>,
+        description => "Optional webhook origin, including http:// or https:// and without a trailing slash. Defaults to the site's absolute URL. Useful for testing through a public host."
+    },
+    #{
+        key => sync_periodic,
+        type => binary,
+        default => <<>>,
+        description => "Internal synchronization cursor: the newest Mollie createdAt timestamp processed by the periodic payment sync. Updated automatically; normally leave unset."
+    }
+]).
+
 -export([
     observe_payment_psp_request/2,
     observe_payment_psp_view_url/2,
