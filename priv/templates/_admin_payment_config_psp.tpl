@@ -1,0 +1,1 @@
+{% include "_admin_payment_config_section.tpl" module=`mod_payment_mollie` title=_"Mollie" explanation=_"Discovery polls the API key’s profile every four hours when collecting all payments is enabled. The synchronization cursor is managed automatically." %}

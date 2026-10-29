@@ -27,6 +27,7 @@
 -mod_config([
     #{
         key => api_key,
+        is_secret => true,
         type => binary,
         default => <<>>,
         description => "Required secret Mollie API key. Use a test_ key for test payments or a live_ key for live payments."
@@ -35,6 +36,7 @@
         key => recurring_payment_interval,
         type => binary,
         default => <<"yearly">>,
+        options => [<<"monthly">>, <<"yearly">>],
         description => "Interval for new recurring subscriptions: monthly or yearly. Defaults to yearly."
     },
     #{
@@ -45,6 +47,7 @@
     },
     #{
         key => sync_periodic,
+        is_readonly => true,
         type => binary,
         default => <<>>,
         description => "Internal synchronization cursor: the newest Mollie createdAt timestamp processed by the periodic payment sync. Updated automatically; normally leave unset."
@@ -55,6 +58,7 @@
     observe_payment_psp_request/2,
     observe_payment_psp_view_url/2,
     observe_payment_psp_status_sync/2,
+    observe_payment_psp_poll/2,
     observe_cancel_recurring_psp_request/2,
     observe_tick_24h/2
 ]).
@@ -66,10 +70,10 @@
 %%      to handle the payment.
 observe_payment_psp_request(#payment_psp_request{
         payment_id = PaymentId,
-        currency = <<"EUR">>,
+        currency = Currency,
         preferred_psp_module = PreferredPspModule
-    }, Context) when PreferredPspModule =:= undefined;
-                     PreferredPspModule =:= ?MODULE ->
+    }, Context) when (Currency =:= <<"EUR">> orelse Currency =:= <<"USD">>)
+        andalso (PreferredPspModule =:= undefined orelse PreferredPspModule =:= ?MODULE) ->
     m_payment_mollie_api:create(PaymentId, Context);
 observe_payment_psp_request(#payment_psp_request{}, _Context) ->
     undefined.
@@ -99,3 +103,11 @@ observe_cancel_recurring_psp_request(#cancel_recurring_psp_request{ user_id = Us
 observe_tick_24h(tick_24h, Context) ->
     m_payment_mollie_api:payment_sync_periodic(Context),
     m_payment_mollie_api:payment_sync_recent_pending(Context).
+
+%% Discovery pages are imported and checkpointed by mod_payment.
+observe_payment_psp_poll(#payment_psp_poll{psp_module = undefined}, _Context) ->
+    ?MODULE;
+observe_payment_psp_poll(#payment_psp_poll{psp_module = ?MODULE} = Request, Context) ->
+    payment_mollie_poll:page(Request, Context);
+observe_payment_psp_poll(#payment_psp_poll{}, _Context) ->
+    undefined.

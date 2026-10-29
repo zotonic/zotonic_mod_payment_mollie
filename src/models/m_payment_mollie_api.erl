@@ -18,6 +18,9 @@
 
 -module(m_payment_mollie_api).
 
+%% Exported for the documented HTTP contract tests in test/.
+-export([api_call/4, mollie_list_subscriptions/2, fetch_payments_since_loop/4]).
+
 -export([
     create/2,
 
@@ -54,7 +57,7 @@
 create(PaymentId, Context) ->
     {ok, Payment} = m_payment:get(PaymentId, Context),
     case maps:get(<<"currency">>, Payment) of
-        <<"EUR">> ->
+        Currency when Currency =:= <<"EUR">>; Currency =:= <<"USD">> ->
             RedirectUrl = z_context:abs_url(
                 z_dispatcher:url_for(
                     payment_psp_done,
@@ -92,13 +95,13 @@ create(PaymentId, Context) ->
         Currency ->
             ?LOG_ERROR(#{
                 in => zotonic_mod_payment_mollie,
-                text => <<"Mollie payment request with non EUR currency">>,
+                text => <<"Mollie payment request with unsupported currency">>,
                 result => error,
                 reason => currency,
                 payment => PaymentId,
                 data => Currency
             }),
-            {error, {currency, only_eur}}
+            {error, {currency, unsupported}}
     end.
 
 payment_pre_flight_check(#{ <<"is_recurring_start">> := true, <<"user_id">> := UserId }, Context) when is_integer(UserId) ->
@@ -354,7 +357,21 @@ fetch_payments_since_loop(Oldest, NextLink, Acc, Context) ->
             Error
     end.
 
-handle_payment_sync(ThisPaymentJSON, Context) ->
+handle_payment_sync(#{<<"id">> := ExtId, <<"createdAt">> := Created} = Payment, Context) ->
+    case payment_poll:is_within_retention(z_convert:to_datetime(Created), Context) of
+        true -> handle_payment_sync_1(Payment, Context);
+        false ->
+            % Do not recreate a pruned recurring payment. Existing payments can
+            % still receive status changes, regardless of their creation date.
+            case m_payment:get_by_psp(mod_payment_mollie, ExtId, Context) of
+                {ok, _} -> handle_payment_sync_1(Payment, Context);
+                {error, notfound} -> ok;
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
+    end.
+
+handle_payment_sync_1(ThisPaymentJSON, Context) ->
     % Payments have the webhook which has the payment-number of the first payment starting a sequence
     % or of the oneoff payment.
     #{
