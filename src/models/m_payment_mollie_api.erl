@@ -17,6 +17,30 @@
 %% limitations under the License.
 
 -module(m_payment_mollie_api).
+-moduledoc(#{
+    zotonic_keywords => [
+        "reference", "backend_developer", "integrator", "model",
+        "payments", "api_and_integration"
+    ]
+}).
+-moduledoc("
+Call Mollie and translate payments and subscriptions into local payment updates.
+
+This is a server-side API module, not a template model: it has no `m_get/3` paths.
+`create(PaymentId, Context)` creates checkout for an existing local EUR or USD
+payment and returns `{ok, #payment_psp_handler{}}` or an error. Application checkout
+should normally use the shared `#payment_request{}` notification.
+
+For example, `m_payment_mollie_api:payment_sync(PaymentId, Context)` fetches and
+synchronizes a known payment. `payment_sync_webhook/3` takes the original local
+payment number and the external payment ID. `list_subscriptions/2`,
+`has_subscription/2` and `cancel_subscription/2` operate on a user's subscriptions;
+email-based lookup variants are also available.
+
+Calls use `mod_payment_mollie.api_key` and propagate API errors. Direct Erlang
+operations are intended for trusted callers and do not provide model-path ACLs.
+").
+
 
 %% Exported for the documented HTTP contract tests in test/.
 -export([api_call/4, mollie_list_subscriptions/2, fetch_payments_since_loop/4]).

@@ -18,6 +18,40 @@
 %% limitations under the License.
 
 -module(mod_payment_mollie).
+-moduledoc(#{
+    zotonic_keywords => [
+        "reference", "backend_developer", "site_administrator", "module",
+        "payments", "configuration", "api_and_integration"
+    ]
+}).
+-moduledoc("
+Provide Mollie payments and recurring subscriptions through `mod_payment`.
+
+Enable `mod_payment_mollie` with its `mod_payment` and `mod_admin` dependencies.
+Configure the site under **System → Payment configuration** with
+`use.mod_admin_config`. Select this adapter with
+`#payment_request{preferred_psp_module = mod_payment_mollie}`. Checkout creation
+supports EUR and USD.
+
+## Site configuration
+
+- `api_key`: secret Mollie API key. A `test_` key selects test payments; a `live_`
+  key selects live payments.
+- `recurring_payment_interval`: `monthly` or `yearly`, defaulting to `yearly`.
+- `webhook_host`: optional public origin, including protocol and without a trailing
+  slash. Defaults to the site's absolute URL.
+- `sync_periodic`: automatically maintained synchronization cursor; leave unset
+  when configuring the module.
+
+The adapter generates `/mollie/webhook/:payment_nr` callback URLs. Callbacks identify
+an existing local payment and retrieve payment data from the authenticated Mollie
+API before updating it. Recurring payments have a daily synchronization path.
+
+Four-hour discovery of previously unknown payments uses the shared mod_payment
+options and retention cutoff. This polls the configured Mollie profile's payments;
+it does not turn the existing payment-specific callback into a generic webhook.
+").
+
 
 -mod_title("Payments using Mollie").
 -mod_description("Payments using Payment Service Provider Mollie").

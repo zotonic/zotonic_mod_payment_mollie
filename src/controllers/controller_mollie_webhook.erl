@@ -17,6 +17,30 @@
 %% limitations under the License.
 
 -module(controller_mollie_webhook).
+-moduledoc(#{
+    zotonic_keywords => [
+        "reference", "backend_developer", "integrator", "controller",
+        "payments", "api_and_integration", "security", "send_and_receive"
+    ]
+}).
+-moduledoc("
+Handle Mollie checkout callbacks.
+
+Accept POST callbacks at `/mollie/webhook/:payment_nr`. The posted `id` is
+retrieved through the authenticated Mollie API before a known local payment is
+updated. The callback body alone is not proof of payment. Unknown local references
+return 404; other synchronization failures return 500 so delivery can be retried.
+
+Generate the endpoint through its dispatch rule, for example:
+
+```django
+{% url mollie_payment_webhook payment_nr=payment_nr %}
+```
+
+This provider-facing endpoint uses the verification described above rather than
+an administrator login.
+").
+
 
 -export([
     allowed_methods/1,
