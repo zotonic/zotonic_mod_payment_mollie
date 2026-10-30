@@ -23,3 +23,15 @@ Development configuration
  * `mod_payment_mollie.webhook_host` this should be the host (with `http:` prefix)
    where Mollie should send the webhook messages. Only use this if your (development)
    site is reachable from the outside via a different URL than the configured hostnames.
+
+Missed payments can also be discovered every four hours when
+`mod_payment.accept_unknown_payments` is enabled. This uses the API key's profile
+and does not require a local webhook URL. The shared
+`mod_payment.disable_unknown_payment_polling` switch disables this discovery;
+the existing daily recurring-payment synchronization is unchanged.
+
+Discovery also scans the [refund list](https://docs.mollie.com/reference/list-all-refunds)
+by refund creation date, retrieving the current payment for each recent refund.
+This can find refunds of payments created before the discovery window. There is
+no general modified-since payment filter; refunds settling after the overlap
+window can still be missed.

@@ -1,0 +1,80 @@
+name: Payment tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: zotonic_mod_payment_mollie on OTP 28
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: erlang:28.5
+    defaults:
+      run:
+        working-directory: zotonic-master
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: zotonic
+          POSTGRES_USER: zotonic
+          POSTGRES_PASSWORD: zotonic
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out Zotonic master
+        uses: actions/checkout@v7
+        with:
+          repository: zotonic/zotonic
+          ref: master
+          path: zotonic-master
+          persist-credentials: false
+
+      - name: Check out mod_payment
+        uses: actions/checkout@v7
+        with:
+          repository: zotonic/zotonic_mod_payment
+          ref: main
+          path: zotonic-master/apps_user/zotonic_mod_payment
+          persist-credentials: false
+
+      - name: Check out the module under test
+        uses: actions/checkout@v7
+        with:
+          # Use the PR merge revision, or the pushed commit on main.
+          path: zotonic-master/apps_user/zotonic_mod_payment_mollie
+          persist-credentials: false
+
+      - name: Install build dependencies and add user Zotonic
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends sudo libseccomp-dev imagemagick ghostscript ffmpeg file
+          adduser --disabled-login zotonic
+
+      - name: Compile Zotonic and payment modules
+        run: make
+
+      - name: Run payment tests in the Zotonic sandbox
+        run: |
+          ZOTONIC_DBHOST=postgres bin/zotonic connectdb
+          chown -R zotonic .
+          sudo -u zotonic env SHELL=/bin/sh LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            ZOTONIC_DBHOST=postgres \
+            apps_user/zotonic_mod_payment/test/run-ci.sh mollie
+
+      - name: Run xref in the Zotonic umbrella
+        run: make xref
+
+      - name: Run Dialyzer in the Zotonic umbrella
+        run: make dialyzer
