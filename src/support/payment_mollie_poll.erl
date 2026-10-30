@@ -1,5 +1,5 @@
 %% @copyright 2026 Driebit BV
-%% @doc Mollie's profile-scoped, newest-created-first payment list.
+%% @doc Discover Mollie payments and late refunds using their creation timelines.
 %% @end
 
 %% Copyright 2026 Driebit BV
@@ -21,6 +21,8 @@
 -include_lib("zotonic_mod_payment/include/payment.hrl").
 
 -spec page(#payment_psp_poll{}, z:context()) -> {ok, list(), term()} | {error, term()}.
+page(#payment_psp_poll{cursor = {refunds, Cursor}} = Request, Context) ->
+    refunds(Request#payment_psp_poll{cursor = Cursor}, Context);
 page(#payment_psp_poll{since = Since, until = Until, cursor = Cursor}, Context) ->
     Query = case Cursor of
         undefined -> "limit=250";
@@ -34,7 +36,7 @@ page(#payment_psp_poll{since = Since, until = Until, cursor = Cursor}, Context) 
                 true -> undefined;
                 false -> next_cursor(maps:get(<<"next">>, Links, undefined))
             end,
-            {ok, Data, Next};
+            {ok, Data, case Next of undefined -> {refunds, undefined}; _ -> Next end};
         {error, _} = Error -> Error;
         _ -> {error, payment_list}
     end.
@@ -75,3 +77,32 @@ status(<<"paid">>) -> {paid, <<"paidAt">>};
 status(<<"canceled">>) -> {cancelled, <<"canceledAt">>};
 status(<<"expired">>) -> {cancelled, <<"expiredAt">>};
 status(<<"failed">>) -> {failed, <<"failedAt">>}.
+
+%% Refund creation is a separate event timeline, including refunds of old payments.
+refunds(#payment_psp_poll{since = Since, until = Until, cursor = Cursor}, Context) ->
+    Args = [{limit, 250}] ++ case Cursor of undefined -> []; _ -> [{from, Cursor}] end,
+    case m_payment_mollie_api:api_call(get, "refunds?" ++ mochiweb_util:urlencode(Args), [], Context) of
+        {ok, #{<<"_embedded">> := #{<<"refunds">> := Refunds}, <<"_links">> := Links}} ->
+            Dated = [{z_convert:to_datetime(maps:get(<<"createdAt">>, R)), R} || R <- Refunds],
+            Selected = [{Date, R} || {Date, R} <- Dated, Date >= Since, Date =< Until],
+            case refund_payments(Selected, Context, []) of
+                {ok, Data} ->
+                    Next = case lists:any(fun({D, _}) -> D < Since end, Dated) of
+                        true -> undefined;
+                        false -> next_cursor(maps:get(<<"next">>, Links, undefined))
+                    end,
+                    {ok, Data, case Next of undefined -> undefined; _ -> {refunds, Next} end};
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error;
+        _ -> {error, refund_list}
+    end.
+
+refund_payments([], _, Acc) -> {ok, lists:reverse(Acc)};
+refund_payments([{Date, #{<<"paymentId">> := Id}} | Rest], Context, Acc) ->
+    case m_payment_mollie_api:api_call(get, <<"payments/", (uri_string:quote(Id))/binary>>, [], Context) of
+        {ok, Payment} ->
+            Data = (payment(Payment))#{updated_at => Date},
+            refund_payments(Rest, Context, [Data | Acc]);
+        {error, _} = Error -> Error
+    end.

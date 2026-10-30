@@ -29,3 +29,9 @@ Missed payments can also be discovered every four hours when
 and does not require a local webhook URL. The shared
 `mod_payment.disable_unknown_payment_polling` switch disables this discovery;
 the existing daily recurring-payment synchronization is unchanged.
+
+Discovery also scans the [refund list](https://docs.mollie.com/reference/list-all-refunds)
+by refund creation date, retrieving the current payment for each recent refund.
+This can find refunds of payments created before the discovery window. There is
+no general modified-since payment filter; refunds settling after the overlap
+window can still be missed.
