@@ -688,7 +688,7 @@ mollie_name_props(Name) when is_binary(Name) ->
 mollie_name_props(_) ->
     #{}.
 
-mollie_address_props(Address) when is_map(Address) ->
+mollie_address_props(Address) ->
     #{
         <<"address_street_1">> => first_defined([
             maps:get(<<"streetAndNumber">>, Address, undefined),
@@ -706,9 +706,7 @@ mollie_address_props(Address) when is_map(Address) ->
             maps:get(<<"country">>, Address, undefined),
             maps:get(<<"countryCode">>, Address, undefined)
         ])
-    };
-mollie_address_props(_) ->
-    #{}.
+    }.
 
 first_map([Value | _Rest]) when is_map(Value) ->
     Value;
