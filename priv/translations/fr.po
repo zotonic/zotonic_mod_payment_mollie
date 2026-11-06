@@ -1,0 +1,26 @@
+# Translations for mod_payment_mollie.
+msgid ""
+msgstr ""
+"Project-Id-Version: mod_payment_mollie\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-06 12:00+0100\n"
+"PO-Revision-Date: 2026-11-06 12:00+0100\n"
+"Last-Translator: Zotonic contributors\n"
+"Language-Team: fr\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: zotonic_mod_payment_mollie/priv/templates/_admin_payment_config_psp.tpl:3
+msgid "Discovery polls the API key’s profile every four hours when collecting all payments is enabled. The synchronization cursor is managed automatically."
+msgstr "Lorsque la collecte de tous les paiements est activée, le profil de la clé API est interrogé toutes les quatre heures. Le curseur de synchronisation est géré automatiquement."
+
+#: zotonic_mod_payment_mollie/priv/templates/_admin_payment_config_psp.tpl:3
+msgid "Mollie"
+msgstr "Mollie"
+
+#: zotonic_mod_payment_mollie/priv/templates/_admin_payment_config_psp.tpl:3
+msgid "Mollie webhooks are omitted for new payments and subscriptions: they are disabled or the webhook host is a local .test or localhost domain. Status updates rely on synchronization. Set a public webhook host to use a tunnel."
+msgstr "Les webhooks Mollie sont omis pour les nouveaux paiements et abonnements : ils sont désactivés ou leur hôte est un domaine local .test ou localhost. Les mises à jour de statut dépendent de la synchronisation. Configurez un hôte de webhook public pour utiliser un tunnel."

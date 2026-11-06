@@ -56,6 +56,7 @@ it does not turn the existing payment-specific callback into a generic webhook.
 -mod_title("Payments using Mollie").
 -mod_description("Payments using Payment Service Provider Mollie").
 -mod_author("Driebit").
+-mod_schema(1).
 -mod_depends([ mod_payment, mod_admin ]).
 
 -mod_config([
@@ -67,11 +68,24 @@ it does not turn the existing payment-specific callback into a generic webhook.
         description => "Required secret Mollie API key. Use a test_ key for test payments or a live_ key for live payments."
     },
     #{
+        key => profiles_access_token,
+        is_secret => true,
+        type => binary,
+        default => <<>>,
+        description => "Optional advanced access token with profiles.read permission to list available Mollie profiles. Used only for profile lookup; payments still use the API key."
+    },
+    #{
         key => recurring_payment_interval,
         type => binary,
         default => <<"yearly">>,
         options => [<<"monthly">>, <<"yearly">>],
         description => "Interval for new recurring subscriptions: monthly or yearly. Defaults to yearly."
+    },
+    #{
+        key => disable_webhooks,
+        type => boolean,
+        default => false,
+        description => "Omit webhooks from new Mollie payments and subscriptions. Webhooks are also omitted automatically for .test and localhost webhook hosts. Existing Mollie webhooks are not changed."
     },
     #{
         key => webhook_host,
@@ -89,6 +103,8 @@ it does not turn the existing payment-specific callback into a generic webhook.
 ]).
 
 -export([
+    manage_schema/2,
+    observe_request_context/3,
     observe_payment_psp_request/2,
     observe_payment_psp_view_url/2,
     observe_payment_psp_status_sync/2,
@@ -97,7 +113,38 @@ it does not turn the existing payment-specific callback into a generic webhook.
     observe_tick_24h/2
 ]).
 
+-include_lib("zotonic_core/include/zotonic.hrl").
 -include_lib("zotonic_mod_payment/include/payment.hrl").
+
+%% @doc Synchronize an accessible Mollie payment before rendering its return page
+%% when no webhook can deliver its status. Never trust status from the browser.
+observe_request_context(#request_context{phase = refresh}, Context, _Context) ->
+    case {z_context:get(zotonic_dispatch, Context), m_req:get(method, Context)} of
+        {payment_psp_done, <<"GET">>} ->
+            case m_payment_mollie_config:webhooks(Context) of
+                #{enabled := false} -> sync_return_payment(Context);
+                _ -> ok
+            end,
+            z_context:set_nocache_headers(Context);
+        _ -> Context
+    end;
+observe_request_context(#request_context{}, Context, _Context) -> Context.
+
+sync_return_payment(Context) ->
+    case z_context:get_q(<<"payment_nr">>, Context) of
+        Nr when is_binary(Nr), byte_size(Nr) > 0, byte_size(Nr) =< 128 ->
+            %% Use the same access check as the ready page's status model path.
+            case m_payment:m_get([<<"status">>, Nr], #{}, Context) of
+                {ok, _} ->
+                    case m_payment:get(Nr, Context) of
+                        {ok, #{<<"id">> := Id, <<"psp_module">> := ?MODULE}} ->
+                            m_payment_mollie_api:payment_sync(Id, Context);
+                        _ -> ok
+                    end;
+                _ -> ok
+            end;
+        _ -> ok
+    end.
 
 %% @doc Payment request, make new payment with Mollie, return
 %%      payment (mollie) details and a redirect uri for the user
@@ -145,3 +192,23 @@ observe_payment_psp_poll(#payment_psp_poll{psp_module = ?MODULE} = Request, Cont
     payment_mollie_poll:page(Request, Context);
 observe_payment_psp_poll(#payment_psp_poll{}, _Context) ->
     undefined.
+
+%% @doc Recover profile IDs from stored Mollie responses without API requests.
+manage_schema(_Version, Context) ->
+    backfill_profiles(0, Context).
+
+backfill_profiles(AfterId, Context) ->
+    {ok, Rows} = z_db:qmap("select id, psp_data from payment
+        where psp_module = 'mod_payment_mollie' and psp_profile_id is null and id > $1
+        order by id limit 500", [AfterId], Context),
+    lists:foreach(fun
+        (#{<<"id">> := Id, <<"psp_data">> := #{<<"profileId">> := Profile}})
+                when is_binary(Profile), Profile =/= <<>> ->
+            % Enrichment does not extend the retention of an old payment.
+            1 = z_db:q("update payment set psp_profile_id = $2 where id = $1", [Id, Profile], Context);
+        (_) -> ok
+    end, Rows),
+    case Rows of
+        [] -> ok;
+        _ -> backfill_profiles(maps:get(<<"id">>, lists:last(Rows)), Context)
+    end.
