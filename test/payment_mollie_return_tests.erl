@@ -19,8 +19,15 @@ return_test() ->
         meck:expect(m_payment_mollie_api, payment_sync, fun(42, _) ->
             put(synced, true), get(sync_result)
         end),
+        %% The return handler sets response headers, so provide a complete Cowboy request.
+        Req = #{method => <<"GET">>, version => 'HTTP/1.1',
+            scheme => <<"https">>, host => <<"localhost">>, port => 443,
+            path => <<"/payment/done">>, qs => <<>>, headers => #{},
+            peer => {{127,0,0,1}, 12345}, sock => {{127,0,0,1}, 443},
+            cert => undefined, ref => test_listener, pid => self(), streamid => 1,
+            has_body => false, body_length => 0},
         C = z_context:set(zotonic_dispatch, payment_psp_done,
-            z_context:set_q_all([{<<"payment_nr">>, <<"secret-number">>}], #context{cowreq = #{}})),
+            z_context:set_q_all([{<<"payment_nr">>, <<"secret-number">>}], #context{cowreq = Req})),
         put(sync_result, ok),
         lists:foreach(fun({Enabled, Allowed, Psp, Expected}) ->
             put(enabled, Enabled), put(allowed, Allowed), put(psp, Psp), erase(synced),
