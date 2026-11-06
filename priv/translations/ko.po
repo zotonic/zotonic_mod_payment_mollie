@@ -1,0 +1,26 @@
+# Translations for mod_payment_mollie.
+msgid ""
+msgstr ""
+"Project-Id-Version: mod_payment_mollie\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-06 12:00+0100\n"
+"PO-Revision-Date: 2026-11-06 12:00+0100\n"
+"Last-Translator: Zotonic contributors\n"
+"Language-Team: ko\n"
+"Language: ko\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: zotonic_mod_payment_mollie/priv/templates/_admin_payment_config_psp.tpl:3
+msgid "Discovery polls the API key’s profile every four hours when collecting all payments is enabled. The synchronization cursor is managed automatically."
+msgstr "모든 결제 수집이 활성화되면 API 키의 프로필을 4시간마다 조회합니다. 동기화 커서는 자동으로 관리됩니다."
+
+#: zotonic_mod_payment_mollie/priv/templates/_admin_payment_config_psp.tpl:3
+msgid "Mollie"
+msgstr "Mollie"
+
+#: zotonic_mod_payment_mollie/priv/templates/_admin_payment_config_psp.tpl:3
+msgid "Mollie webhooks are omitted for new payments and subscriptions: they are disabled or the webhook host is a local .test or localhost domain. Status updates rely on synchronization. Set a public webhook host to use a tunnel."
+msgstr "새 결제와 구독에는 Mollie 웹훅이 포함되지 않습니다. 웹훅이 비활성화되어 있거나 웹훅 호스트가 로컬 .test 또는 localhost 도메인입니다. 상태 업데이트는 동기화에 의존합니다. 터널을 사용하려면 공개 웹훅 호스트를 설정하세요."

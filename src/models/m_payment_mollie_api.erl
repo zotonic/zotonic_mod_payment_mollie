@@ -201,6 +201,7 @@ do_payment(PaymentId, Args, Context) ->
             {ok, #payment_psp_handler{
                     psp_module = mod_payment_mollie,
                     psp_external_id = MollieId,
+                    psp_profile_id = maps:get(<<"profileId">>, JSON, undefined),
                     psp_data = JSON,
                     redirect_uri = PaymentUrl
                    }};
@@ -248,6 +249,12 @@ do_payment(PaymentId, Args, Context) ->
 
 %% @doc Allow special hostname for the webhook, useful for testing.
 webhook_url(PaymentNr, Context) ->
+    case m_payment_mollie_config:webhooks(Context) of
+        #{enabled := false} -> undefined;
+        #{enabled := true} -> webhook_url_enabled(PaymentNr, Context)
+    end.
+
+webhook_url_enabled(PaymentNr, Context) ->
     Path = z_dispatcher:url_for(
         mollie_payment_webhook,
         [ {payment_nr, PaymentNr} ],
@@ -260,6 +267,8 @@ webhook_url(PaymentNr, Context) ->
     end.
 
 %% @doc Split payment nr from the webhook url.
+webhook_url2payment(null) ->
+    undefined;
 webhook_url2payment(undefined) ->
     undefined;
 webhook_url2payment(WebhookUrl) ->
@@ -399,11 +408,21 @@ handle_payment_sync_1(ThisPaymentJSON, Context) ->
     % Payments have the webhook which has the payment-number of the first payment starting a sequence
     % or of the oneoff payment.
     #{
-        <<"id">> := ExtId,
-        <<"webhookUrl">> := WebhookUrl
+        <<"id">> := ExtId
     } = ThisPaymentJSON,
-    FirstPaymentNr = webhook_url2payment(WebhookUrl),
-    case m_payment:get(FirstPaymentNr, Context) of
+    FirstPaymentNr = case webhook_url2payment(maps:get(<<"webhookUrl">>, ThisPaymentJSON, undefined)) of
+        undefined ->
+            case maps:get(<<"metadata">>, ThisPaymentJSON, undefined) of
+                #{<<"payment_nr">> := Nr} when is_binary(Nr) -> Nr;
+                _ -> undefined
+            end;
+        Nr -> Nr
+    end,
+    Lookup = case FirstPaymentNr of
+        undefined -> m_payment:get_by_psp(mod_payment_mollie, ExtId, Context);
+        _ -> m_payment:get(FirstPaymentNr, Context)
+    end,
+    case Lookup of
         {ok, FirstPayment} ->
             % This is the original payment starting the sequence
             case maps:get(<<"psp_module">>, FirstPayment) of
@@ -536,7 +555,15 @@ payment_sync_webhook(FirstPaymentNr, ExtPaymentId, Context) when is_binary(First
     end.
 
 
-handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<"recurring">> } = JSON, Context) ->
+handle_payment_update(FirstPaymentId, FirstPayment, #{<<"id">> := ExtId} = JSON, Context) ->
+    case m_payment:get_by_psp(mod_payment_mollie, ExtId, Context) of
+        {ok, #{<<"id">> := Id}} ->
+            ok = m_payment:update_psp_profile(Id, maps:get(<<"profileId">>, JSON, undefined), Context);
+        {error, notfound} -> ok
+    end,
+    handle_payment_update_1(FirstPaymentId, FirstPayment, JSON, Context).
+
+handle_payment_update_1(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<"recurring">> } = JSON, Context) ->
     % A recurring payment for an existing (first) payment.
     % The given (first) Payment MUST have 'recurring' set.
     #{
@@ -575,6 +602,7 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
                         psp_external_id = ExtId,
                         psp_payment_description = Description,
                         redirect_uri = <<>>, % there is no redirect uri
+                        psp_profile_id = maps:get(<<"profileId">>, JSON, undefined),
                         psp_data = JSON
                     },
                     ok = m_payment:update_psp_handler(NewPaymentId, PSPHandler, Context),
@@ -592,7 +620,7 @@ handle_payment_update(FirstPaymentId, _FirstPayment, #{ <<"sequenceType">> := <<
                     Error
             end
     end;
-handle_payment_update(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"first">> } = JSON, Context) ->
+handle_payment_update_1(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"first">> } = JSON, Context) ->
     % First recurring payment for an existing payment - if moved to paid then start the subscription
     Status = payment_status(JSON),
     DateTime = z_convert:to_datetime( status_date(Status, JSON) ),
@@ -608,7 +636,7 @@ handle_payment_update(FirstPaymentId, FirstPayment, #{ <<"sequenceType">> := <<"
                 {error, _} = Error -> Error
             end
     end;
-handle_payment_update(OneOffPaymentId, OneOffPayment, JSON, Context) ->
+handle_payment_update_1(OneOffPaymentId, OneOffPayment, JSON, Context) ->
     Status = payment_status(JSON),
     ?LOG_INFO(#{
         in => zotonic_mod_payment_mollie,
@@ -826,7 +854,7 @@ api_call(Method, Endpoint, Args, Context) ->
                                             fun({K,V}) ->
                                                 {z_convert:to_list(K), z_convert:to_list(V)}
                                             end,
-                                            Args),
+                                            [A || A <- Args, A =/= {webhookUrl, undefined}]),
                               Body = mochiweb_util:urlencode(FormData),
                               {Url, Hs, "application/x-www-form-urlencoded", Body}
                       end,
@@ -982,6 +1010,7 @@ create_subscription_1(FirstPayment, CustomerId, Context) ->
                         {interval, subscription_interval(Context)},
                         {startDate, subscription_start_date(Context)},
                         {webhookUrl, WebhookUrl},
+                        {metadata, z_json:encode(#{<<"payment_nr">> => maps:get(<<"payment_nr">>, FirstPayment)})},
                         {description, subscription_description(FirstPayment, CustomerId, Context)}
                     ],
                     case api_call(post, "customers/" ++ z_convert:to_list(CustomerId) ++ "/subscriptions",

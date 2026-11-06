@@ -56,7 +56,7 @@ payment(#{<<"id">> := Id, <<"status">> := Status,
     %% A refunds/chargebacks link alone does not imply a full reversal.
     Reversed = reversed(<<"amountRefunded">>, Amount, P)
         orelse reversed(<<"amountChargedBack">>, Amount, P),
-    #{psp_external_id => Id, amount => Amount, currency => Currency,
+    #{psp_external_id => Id, psp_profile_id => maps:get(<<"profileId">>, P, undefined), amount => Amount, currency => Currency,
       status => case Reversed of true -> refunded; false -> LocalStatus end,
       status_date => case Reversed of
           true -> calendar:universal_time();
